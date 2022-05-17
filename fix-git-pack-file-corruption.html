@@ -1,0 +1,403 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> 修复损坏的 git pack 文件 - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/fix-git-pack-file-corruption.html">修复损坏的 git pack 文件</a></h2>
+	<p class="topMeta">由 李晓岚 在 2018年08月02日发表</p>
+	<div class="topContent">
+	
+	<h1>事由</h1>
+<p>从朋友处得到一个 <code>git</code> repo 的 <code>tgz</code> 存档文件，解压之，然后使用 <code>git fsck</code> 来校验存档的完整性，当看到输出 <code>error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch</code> 时，心想：&ldquo;完蛋了，十几个 G 的文件损坏了，又得重来来过&rdquo;。转念一想，有没有可能修复呢？</p>
+<h1>声明</h1>
+<p>本文中不涉及 <code>git pack</code> 文件自身的任何修复信息，所有修复信息都来自外部信源。据我所知，<code>git pack</code> 文件也不包含任何冗余信息可以用于自愈。</p>
+<p>文中所有 <code>git object id</code> 都经过编辑处理。</p>
+<h1>意外的惊喜</h1>
+<p>下面是 <code>git fsck</code> 完整的输出结果。乍一看，很多行错误，研判之后发现其实只有三五个 <code>object</code> 损坏。</p>
+<pre><code>leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch
+error: index CRC mismatch for object 600f* from ./objects/pack/pack-73ca*.pack at offset 705539900
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 600f* from ./objects/pack/pack-73ca*.pack at offset 705539900
+error: index CRC mismatch for object c7cd* from ./objects/pack/pack-73ca*.pack at offset 3409251380
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack c7cd* from ./objects/pack/pack-73ca*.pack at offset 3409251380
+error: inflate: data stream error (incorrect data check)
+error: failed to read delta base object c7cd* at offset 3409251380 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack b7d6* from ./objects/pack/pack-73ca*.pack at offset 3435711445
+error: index CRC mismatch for object c0b6* from ./objects/pack/pack-73ca*.pack at offset 6495930501
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack c0b6* from ./objects/pack/pack-73ca*.pack at offset 6495930501
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: failed to read delta base object c0b6* at offset 6495930501 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack 3efb* from ./objects/pack/pack-73ca*.pack at offset 6506530415
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: failed to read delta base object c0b6* at offset 6495930501 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack 9db7* from ./objects/pack/pack-73ca*.pack at offset 6684278448
+error: index CRC mismatch for object 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+Checking objects: 100% (7812/7812), done.
+</code></pre>
+<p>在对 <code>git fsck</code> 的结果失望过后，回想起解压过程中，有看到 <code>tmp_pack_*</code> 之类的文件。很多程序在处理文件时都是先用临时文件来保存中间结果，等所有写操作都完成之后，再将临时文件重命名为期望的文件名，<code>git</code> 对 <code>pack</code> 文件的操作也如此。如果残留的 <code>tmp_pack_*</code> 临时文件和损坏的 <code>pack-73ca*.pack</code> 文件相关的话，<code>tmp_pack_*</code> 的内容应该就是 <code>pack-73ca*.pack</code> 的前半部分。所以，上述 <code>git fsck</code> 报告中损坏的 <code>object</code> 在文件中的位置 <code>offset</code>，如果小于 <code>tmp_pack_*</code> 文件长度，则很可能 <code>tmp_pack_*</code> 中包含了损坏 <code>object</code> 的正确内容，继而得以从 <code>tmp_pack_*</code> 中恢复此 <code>object</code>。</p>
+<p>那到底 <code>tmp_pack_*</code> 和 <code>pack-73ca*.pack</code> 是否相关呢？那就来比较一下两文件的内容。</p>
+<pre><code>leexiaolan@cherry:~/corrupted.git/objects/pack$ cmp -lb pack-73ca*.pack tmp_pack_h3N0ZY
+cmp: EOF on tmp_pack_h3N0ZY
+ 709450211 175 }    135 ]
+3157919099   7 ^G    47 '
+3417553763 266 M-6  226 M-^V
+6501742392  55 -     15 ^M
+</code></pre>
+<p><code>tmp_pack_*</code> 文件长度大于 7G，和 <code>pack-73ca*.pack</code> 只存在 4 个字节的差异，很明显是相关的。再对比 <code>git fsck</code> 的输出，除了偏移 <code>3157919098</code> （<code>cmp</code> 输出为从 <code>1</code> 开始的计数，非 <code>0</code> 开始的偏移）之外，其它三处附近均有 <code>object</code> 损坏，故将这三处用 <code>tmp_pack_*</code> 的数据去恢复 <code>pack-73ca*.pack</code> 中对应数据。对恢复之后的结果执行 <code>git fsck</code>，看看有什么变化。</p>
+<pre><code>leexiaolan@cherry:~/corrupted.git/objects/pack$ T=709450210; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0396145 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git/objects/pack$ T=3417553762; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0237443 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git/objects/pack$ T=6501742391; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0455239 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch
+error: index CRC mismatch for object 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+Checking objects: 100% (7812/7812), done.
+</code></pre>
+<p>Hooray! <code>git fsck</code> 报告只有一个 <code>object</code> 损坏了，但这个 <code>object</code> 位于偏移 <code>15644018296</code>，大于 <code>tmp_pack_*</code> 文件大小，<code>tmp_pack_*</code> 已经无能为力了。</p>
+<h1>反观字节损坏模式</h1>
+<p>上面 <code>cmp</code> 输出中报告有 4 个字节差异，其中我们已经恢复到 <code>pack-73ca*.pack</code> 文件的有三处，而且 <code>git fsck</code> 的结果也说明这三处 <code>tmp_pack_*</code> 中保存的是正确值，相反，被故意忽略的那个字节，保存在 <code>pack-73ca*.pack</code> 中的值才是正确的，对应 <code>tmp_pack_*</code> 中的值是损坏的。总结下来，损坏数据如下（<code>cmp</code> 输出为八进制）。</p>
+<pre><code>corrupted    correct
+     0175    0135
+      047      07
+     0266    0226
+      055     015
+</code></pre>
+<p>很明显，<code>corrupted - correct == 040</code>， 损坏的数据都是每个字节的第五个 <code>bit</code> 意外置 <code>1</code>。如果我们对偏移 <code>15644018296</code> 损坏的 <code>object</code> 做这样的假设：</p>
+<ol>
+<li>损坏的字节也是因为第五个 <code>bit</code> 置位。</li>
+<li>整个 <code>object</code> 中，有且只有一个字节损坏。</li>
+</ol>
+<p>基于这样的假设，有没有可能通过穷举损坏的字节来恢复最后一个 <code>object</code> 数据呢？</p>
+<h1>穷举</h1>
+<p>阅读 <a title="show-index documentation" href="https://github.com/git/git/blob/master/Documentation/git-show-index.txt">git-show-index文档</a> 得知，<code>pack-*.idx</code> 中保存每个 <code>object</code> 在 <code>pack</code> 中的偏移和 <code>CRC32</code>。同样假定这些保存在 <code>pack-*.idx</code> 文件中的信息是正确的，因此穷举过程中，可以通过计算 <code>CRC32</code> 来验证合法性。通过源代码 <a href="https://github.com/git/git/blob/b7bd9486b055c3f967a870311e704e3bb0654e4f/builtin/pack-objects.c#L847">pack-objects.c</a> 得知，<code>pack</code> 文件中相邻 <code>object</code> 之间是没有任何其它数据或 <code>padding</code> 的，因此可以通过前后两个 <code>object</code> 的偏移之差来计算前面 <code>object</code> 的大小。通过偏移和大小，已经可以获取到 <code>object</code> 的数据了，虽然这个数据是损坏的。有了这些信息，便可以设计一个穷举过程来恢复数据了。</p>
+<p>穷举过程大概是这样的：对于损坏数据中，每一个第五 <code>bit</code> 被置位的字节，我们都尝试将其清零，然后计算 <code>CRC32</code>，若清零后计算得到的 <code>CRC32</code> 和 <code>pack-*.idx</code> 文件中保存的值相同，则认为找到了损坏的字节。</p>
+<pre><code>leexiaolan@cherry:~/corrupted.git/objects/pack$ git show-index&lt;pack-*.idx|sort -n|grep \\b3b53 -A1
+15644018296 3b53* (3bbff14e)
+15651154929 eda3* (2e391a6d)
+# 损坏 `object` `3b53*` 大小为 15651154929-15644018296，
+# 偏移为 15644018296，CRC32 为 0x3bbff14e
+leexiaolan@cherry:~/corrupted.git/objects/pack$ cat corruption
+#!/usr/bin/env python2
+# Parameters: pack offset length expectedCrc [start [end]]
+
+import sys
+from zlib import crc32
+
+def main():
+  argv = list(sys.argv[1:])
+  pack = argv.pop(0)
+  offset = int(argv.pop(0), 0)
+  length = int(argv.pop(0), 0)
+  expectedCrc = int(argv.pop(0), 0) &amp; 0xffffffff
+  start = int(argv.pop(0), 0) if argv else 0
+  end = int(argv.pop(0), 0) if argv else sys.maxint
+
+  with open(pack, 'rb') as fi:
+    fi.seek(offset)
+    d=fi.read(length)
+
+  prev = crc32(d[:start]) if 0 &lt; start else 0
+  for i in range(start, min(end, len(d))):
+    if i % 4096 == 0: print 'trying', hex(i)
+    byte = ord(d[i])
+    if (byte &amp; 0x20) != 0:
+      crc = crc32(d[i+1:], crc32(chr(byte &amp; ~0x20), prev)) &amp; 0xffffffff
+      if crc == expectedCrc:
+    print 'found fix at offset', hex(i), hex(byte), '-&gt;', hex(byte &amp; ~0x20)
+    return 0
+
+    prev = crc32(d[i], prev)
+
+  print 'not found'
+  return 1
+
+if '__main__' == __name__:
+  sys.exit(main())
+leexiaolan@cherry:~/corrupted.git/objects/pack$ ./corruption pack-*.pack \
+  15644018296 $((15651154929-15644018296)) 0x3bbff14e
+... # 几个小时后
+trying 0x1d0000
+trying 0x1d1000
+found fix at offset 0x1d1e81 0xa1 -&gt; 0x81
+</code></pre>
+<h1>验证</h1>
+<p>前面穷举过程中找到的解，虽然通过了 <code>CRC32</code> 的验证，但是不排除碰撞的可能，尽管概率比较小。如果修复后的 <code>pack</code>，<code>git fsck</code> 没有报告 <code>SHA1 checksum mismatch</code>，因为两种不同方法的 <code>checksum</code> 都同时碰撞的概率就非常小了，这样就有很高的置信度认为修复是成功的。</p>
+<pre><code>leexiaolan@cherry:~/corrupted.git/objects/pack$ echo -en \\x81 | \
+  dd of=pack-73ca*.pack conv=notrunc bs=1 seek=$((15644018296+0x1d1e81))
+1+0 records in
+1+0 records out
+1 byte copied, 0.023496 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+Checking objects: 100% (7812/7812), done.
+</code></pre>
+<p>'git fsck` 没有报告任何错误，看起来上面所做假设都是对的，修复很成功。</p>
+<h1>结论</h1>
+<p>本文中涉及的文件损坏，不是因为网络传输导致的，网络传输的是 <code>tgz</code> 存档。<code>tgz</code> 存档文件本身已经做过 <code>md5sum</code> 校验无误。损坏进入的时机应该是在 <code>tgz</code> 存档文件创建之时。损坏字节的变化模式也很明显，都是第五个 <code>bit</code> 意外置位，这个模式也是我们得以修复的关键所在。最后，损坏的 <code>git object</code> 大小 7M+，穷举所耗费时间 python 代码大概 4，5 个小时（单 CPU 时间），基本可以接受。</p>
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/git.html">git</a><a href="/tag/data%20corruption.html">data corruption</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'fix-git-pack-file-corruption';
+var disqus_title = '修复损坏的 git pack 文件';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

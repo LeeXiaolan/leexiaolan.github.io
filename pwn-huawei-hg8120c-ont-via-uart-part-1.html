@@ -1,0 +1,369 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> PWN华为HG8120C光猫（一） - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></h2>
+	<p class="topMeta">由 李晓岚 在 2016年05月01日发表</p>
+	<div class="topContent">
+	
+	<p>几星期前，家里网络更换了光猫(ONT)，由HG8120R换成了HG8120C，均系华为生产，ISP提供。事后发现原来完美工作的IPv6-in-IPv4 tunnel丢包严重，达到90%以上。由于ONT是唯一变更了的设备，所以可以几乎100%确认是新的ONT HG8120C造成的丢包。于是在过去的几个星期里，PWN新ONT设备便成了我闲暇时光的主要工作，最终成功pwned，获取了root shell。</p>
+<h1>起因</h1>
+<p>更换设备后，很快发现访问IPv6出现困难，完全不能打开网页，马上使用<code>ping6</code>进行诊断，得到了如下很有规律的结果：</p>
+<pre><code>    leexiaolan@localhost $ ping6 2001:4860:4860::8888
+    PING 2001:4860:4860::8888(2001:4860:4860::8888) 56 data bytes
+    64 bytes from 2001:4860:4860::8888: icmp_seq=1 ttl=56 time=416 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=17 ttl=56 time=419 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=33 ttl=56 time=415 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=49 ttl=56 time=423 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=65 ttl=56 time=427 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=80 ttl=56 time=426 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=96 ttl=56 time=358 ms
+    ^C
+    --- 2001:4860:4860::8888 ping statistics ---
+    97 packets transmitted, 7 received, 92% packet loss, time 96013ms
+    rtt min/avg/max/mdev = 358.180/412.373/427.908/22.604 ms
+</code></pre>
+<p>从结果来看，链路中某个设备，每16个数据包会丢掉其中的15个，仅有一个通过，丢包率高达15/16=93.75%。得到这样的结果，考虑到tunnel server在香港，第一反应这个丢包的设备是GFW。于是换国内某云服务商的机器做tunnel server测试，<code>ping6</code>的目标地址就是tunnel server自身的IPv6地址，也得到了类似结果，所以，GFW的嫌疑洗清了。</p>
+<h1>猜测</h1>
+<p>这时，刚换的ONT设备的嫌疑就陡然上升了。使用设备提供的<code>useradmin</code>登录ONT的web管理页面，可以看到新ONT可以提供IPv6连接，但是没有启用，也无法手动配置。而IPv6这个功能在老ONT上是没有的，这进一步加大了新ONT丢弃IPv6包的嫌疑。但由于老ONT HG8120R已经被ISP回收，无法置换回去测试，所以还不能100%确定就是ONT设备丢包。即便ONT是我已知的链路中唯一更换的设备，但无法确定ISP的局端设备是否发生变化，所以需要更强的证据来佐证是新ONT丢的包。如果可以抓取到ONT光口发出去的数据包，就能&hellip;&hellip;，很不幸手上没有这样的设备，买个这样的设备估计也不会很便宜。所以，剩下唯一的途径就从ONT下手，在ONT内部抓取数据包。</p>
+<p>之前老的ONT已经PWNED，知道设备运行Linux kernel，Hisilicon（其母公司是华为）的ARM CPU。要在这样的设备上抓包，需要两个条件：一是抓包软件，二是root shell。第一个条件容易满足，交叉编译ARM处理器的tcpdump即可，我之前已经为HG8120R静态链接编译了tcpdump，应该可以直接使用，就差root shell了。</p>
+<h1>UART</h1>
+<p>以往的经验告诉我，这样的设备都有一个UART debug port，焊上对应信号线，root shell马上就有了，就像给机柜中的服务器插上显示器和键盘。只是这种方法需要拆开设备外壳包装，在电路板上找到对应针脚。一番观察之后，确定HG8120C外壳只用一颗螺丝和机壳周围一圈多个卡口固定。尽量不弄坏卡口，同时也保护好外观，小心翼翼地拆开机器外壳，取出电路板，马上就发现下图的五个针脚焊盘J4：</p>
+<p><img title="HG8120C UART 针脚" src="../media/ag5zfmJsb2ctbGVlLWhyZHIOCxIFTWVkaWEY8t_AAQw/hg8120c-uart-pin.png" alt="HG8120C UART pin" /></p>
+<p>针脚定义与<a href="http://jcjc-dev.com/2016/04/08/reversing-huawei-router-1-find-uart/">Practical Reverse Engineering Part 1 - Hunting for Debug Ports</a>中相同，唯一例外就是上图中红框标注的两个电阻R231和R232缺失，而这两个电阻刚好是1和5脚，也就是Rx和Tx与电路连接的唯一通路，焊上两个100欧电阻或直接将TTL线焊接在中间两个焊点上即可。</p>
+<h1>连接，上电，启动</h1>
+<p>焊接好三根信号线，和电脑上使用的USB转串口设备连接，剩下就只用确定几个协议参数了。多数情况下除了波特率，其它参数都是默认值。波特率通常也都是使用那几个知名的速率，挨个试一遍就可以找到了。我运气很好，第一次试用115200便对了，上电启动设备，屏幕上很快就滚过下面这些信息：</p>
+<pre><code>    leexiaolan@localhost $ sudo screen /dev/ttyUSB0 115200
+
+    HuaWei StartCode 2012.02 (R15C10 Apr 03 2015 - 01:24:45)
+
+    NAND:  NAND FLASH Enter Low Driver Mode
+    Nand(Hardware): 128 MiB
+    startcode select the uboot to load
+    the high RAM is :8080103c
+    startcode uboot boot count:71872272
+    use the main slave_param area from flash, the RAM data is not OK!!!
+    Use the UbootA to load first
+    Use the UbootA to load success
+
+    U-Boot 2010.03 (R15C10 Jun 29 2015 - 17:21:21)
+
+    DRAM:  128 MB
+    Boot From NAND flash
+    Chip Type is SD5116H
+    ...
+    waitForPADO: wait for PADO on wan3 10 sec.
+    profile close core dump
+    Press any key to get started
+
+    telnet port:23
+    Open device /dev/pts/2 OK!
+    Entering character mode
+    Escape character is '^]'.
+
+    Welcome Visiting Huawei Home Gateway
+    Copyright by Huawei Technologies Co., Ltd.
+
+    Login:
+</code></pre>
+<p>提示输入用户名，尝试常见的几个用户名密码组合，最后用户名root，密码admin成功登录了。</p>
+<pre><code>    Login:root
+    Password:
+    WAP&gt;
+</code></pre>
+<p>得到了<code>WAP&gt;</code>提示符，输入<code>shell</code>和<code>debugshell</code>等命令都提示命令不存在。</p>
+<pre><code>    WAP&gt;shell
+    ERROR::Command is not existed
+
+    WAP&gt;debugshell
+    ERROR::Command is not existed
+</code></pre>
+<p>Google一番后，原来是需要先使用<code>su</code>进入特权模式，再使用<code>shell</code>命令。</p>
+<pre><code>    WAP&gt;su
+    success!
+    SU_WAP&gt;shell
+
+    BusyBox v1.18.4 (2015-06-27 14:02:58 CST) built-in shell (ash)
+    Enter 'help' for a list of built-in commands.
+
+    profile close core dump
+    WAP(Dopra Linux) #
+</code></pre>
+<p>嗯，看到熟悉的BusyBox了，心中一阵喜悦。可惜这段喜悦没能延续很长时间，尝试输入两个命令后就彻底绝望了。</p>
+<pre><code>    WAP(Dopra Linux) # ls
+    /bin/sh: wap.ls: not found
+    WAP(Dopra Linux) # ps
+    ERROR::Command is not existed
+
+    WAP(Dopra Linux) # help
+    ERROR::Command is not existed
+
+    WAP(Dopra Linux) # ?
+    boardtype.sh
+    clcmcheck.sh
+    customize.sh
+    EquipMode.sh
+    exit
+    getcustominfo.sh
+    getcustomize.sh
+    ifconfig
+    iwconfig
+    ...
+</code></pre>
+<p>BusyBox是假的，还是只能执行几个有限的命令。失望之余，只能寄希望于看能不能在这三个<code>WAP&gt;</code>，<code>SU_WAP&gt;</code>和<code>WAP(Dopra Linux) #</code>提示符下找到任何一个可以利用的命令，于是开始了一个无聊的循环，一个命令一个命令的尝试，了解其作用，最后得出令人心塞的结论：全军覆没，没有一个可以用于执行任意代码。</p>
+<h1>如何继续</h1>
+<p>到目前为止，厂商的安全措施做得还不错，还没有发现明显可以利用的漏洞。那么，下一步该如何进行呢？仔细思考了一会，大概还有如下几个途径：</p>
+<ol>
+<li>使用jTAG直接读写Flash。这种方法的不方便在于，需要处理系统本身的文件系统数据结构以及uboot对数据的校验等信息。另外，jTAG针脚比UART多，电路板上也没有明显标记，在没有CPU的数据手册情况下，很难确定针脚定义。</li>
+<li>使用Flash编程器在线或焊下芯片离线读写Flash。这种操作Flash的方式更困难，还需要考虑<a href="http://community.hpe.com/t5/Security-Research/Reverse-engineering-NAND-Flash-for-fun-and-profit/ba-p/6418140">Flash的OOB数据</a>。</li>
+<li>如何中断uboot，得到uboot cli，从而修改Flash或从网络加载kernel等。</li>
+<li>找Web管理页面或命令行参数注入漏洞。</li>
+<li>修改firmware升级包，<code>WAP&gt;</code>提示符下使用<code>load pack</code>升级。</li>
+<li>厂商隐藏的其它后门。</li>
+</ol>
+<p>可能还存在某些目前还未想到的方法。总之，可以尝试的方法还很多，肯定能找到行之有效方法。下篇再继续我们的PWN HG8120C之旅。</p>
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/ONT.html">ONT</a><a href="/tag/ARM.html">ARM</a><a href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html">安全漏洞</a><a href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html">路由器</a><a href="/tag/%E5%9B%BA%E4%BB%B6.html">固件</a><a href="/tag/PWN.html">PWN</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'pwn-huawei-hg8120c-ont-via-uart-part-1';
+var disqus_title = 'PWN华为HG8120C光猫（一）';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

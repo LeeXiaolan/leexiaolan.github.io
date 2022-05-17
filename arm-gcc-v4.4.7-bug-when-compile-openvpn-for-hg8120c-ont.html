@@ -1,0 +1,357 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> 编译 OpenVPN 邂逅 ARM GCC bug - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></h2>
+	<p class="topMeta">由 李晓岚 在 2017年05月07日发表</p>
+	<div class="topContent">
+	
+	<p>这几天折腾在 HG8120C 光猫（ONT）上运行 OpenVPN，历经千辛万苦编译成功了，结果运行中 Assert 失败，一路排查下来，最后发现居然是工具链 GCC 的错。这已经不是第一次遇到工具链的 bug了，第一次是 <a title="ARM编译器ADS1.2 Build 848存在乱序优化Bug" href="/%E7%BC%96%E8%AF%91%E5%99%A8ADS%E4%B9%B1%E5%BA%8F%E4%BC%98%E5%8C%96%E5%AD%98%E5%9C%A8Bug.html">ARM ADS</a> 乱序优化的 bug，第二次是 <a title="链接器中Thumb BLX指令编码" href="/Thumb-BLX-Instruction-Encoding.html">自己写的链接器</a>，如果这也算的话。</p>
+<h1>发现</h1>
+<p>在 <a title="HG8120C持久root shell及完美解决IPv6丢包" href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">实现了 HG8120C 的持久 root shell</a> 后，就在上面运行了 PPTP 服务，用于充当出门在外身处非安全网络环境中时使用的 VPN 网关。家庭网络中，本来 ONT 一般就是不断电的，而且 HG8120C 上内存和处理器资源也还算充足，所以拿来做 VPN 网关很节能环保。但是 PPTP 很多年前就已经是 <a title="PPTP Security" href="https://en.wikipedia.org/wiki/Point-to-Point_Tunneling_Protocol#Security">不安全的协议</a> 了。终于下定决心用 OpenVPN 替换 PPTP 了，可是过程并不平坦。</p>
+<p>由于我还有 Windows XP 客户端，所以选择了最后支持 XP 的 OpenVPN v2.3.14 版本。几经周折总算是编译成功了，其中磕跘暂且不表。配置好服务起客户端，开始进行连接测试，当客户端连接成功后，服务器却显示出了错误的信息，紧接着就退出了，到底发生了什么？</p>
+<pre><code>Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Assertion failed at crypto.c:173 (buf_inc_len(&amp;work, outlen))
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Exiting due to fatal error
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 /sbin/route del -net 10.8.0.0 netmask 255.255.255.0
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Closing TUN/TAP interface
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 /sbin/ifconfig tun0 0.0.0.0
+</code></pre>
+<p>Assertion failed at crypto.c:173 (buf_inc_len(&amp;work, outlen))，很明显的断言失败信息。查看源代码 <a href="https://github.com/OpenVPN/openvpn/blob/117dadc02d163a3e93c28ef7bd296c8dfa1f6156/src/openvpn/crypto.c#L173">crypto.c #173</a></p>
+<pre><code>167   /* Encrypt packet ID, payload */
+168   ASSERT (cipher_ctx_update (ctx-&gt;cipher, BPTR (&amp;work), &amp;outlen, BPTR (buf), BLEN (buf)));
+169   ASSERT (buf_inc_len(&amp;work, outlen));
+170
+171   /* Flush the encryption buffer */
+172   ASSERT (cipher_ctx_final(ctx-&gt;cipher, BPTR (&amp;work) + outlen, &amp;outlen));
+173   ASSERT (buf_inc_len(&amp;work, outlen));
+174
+175   /* For all CBC mode ciphers, check the last block is complete */
+176   ASSERT (cipher_kt_mode (cipher_kt) != OPENVPN_MODE_CBC ||
+177       outlen == iv_size);
+</code></pre>
+<p>跟踪进 <code>buf_inc_len</code> 函数所在的 <a href="https://github.com/OpenVPN/openvpn/blob/117dadc02d163a3e93c28ef7bd296c8dfa1f6156/src/openvpn/buffer.h#L461"><code>buffer.h</code></a></p>
+<pre><code>412 static inline bool
+413 buf_safe_bidir (const struct buffer *buf, int len)
+414 {
+415   if (buf_valid (buf) &amp;&amp; buf_size_valid_signed (len))
+416     {
+417       const int newlen = buf-&gt;len + len;
+418       return newlen &gt;= 0 &amp;&amp; buf-&gt;offset + newlen &lt;= buf-&gt;capacity;
+419     }
+420   else
+421     return false;
+422 }
+...
+461 static inline bool
+462 buf_inc_len (struct buffer *buf, int inc)
+463 {
+464   if (!buf_safe_bidir (buf, inc))
+465     return false;
+466   buf-&gt;len += inc;
+467   return true;
+468 }
+</code></pre>
+<p>在这几个函数里面加入一些诊断信息的输出，试图找到是哪个条件不满足导致的断言失败。万万没想到的是，在输出了诊断信息后，并没有引发断言失败，看起来是 <a title="Observer effect" href="https://en.wikipedia.org/wiki/Observer_effect_(physics)">观测者效应</a> 在作祟。由于有之前的两次经验，所以马上就想到可能我又遇上了第三次工具链的 bug。马上着手检查编译器生成的汇编代码（thumb 指令） <code>crypto.S</code>。</p>
+<pre><code>5250    .loc 1 173 0            ; crypto.c #173
+5251    ldr r3, [sp, #80]
+5252 .LBB1011:
+5253 .LBB1012:
+5254 .LBB1013:
+5255 .LBB1014:
+5256    .loc 3 230 0            ; buffer.h #230
+5257    ldr r2, .L474+28        ; -1000000
+5258    cmp r3, r2
+5259    bge .LCB4900
+5260    b   .L428   @long jump
+5261 .LCB4900:
+5262    ldr r0, .L474+4         ; 999999
+5263    cmp r3, r0
+5264    ble .LCB4903
+5265    b   .L428   @long jump
+5266 .LCB4903:
+5267 .LBE1014:
+5268 .LBE1013:
+5269 .LBB1015:
+5270    .loc 3 418 0            ; buffer.h #418
+5271    add r8, r8, r3
+5272    bpl .LCB4909
+5273    b   .L428   @long jump
+5274 .LCB4909:
+5275    mov r1, r8
+5276    add r3, r7, r1
+5277    cmp r9, r3
+5278    bge .LCB4913
+5279    b   .L428   @long jump
+</code></pre>
+<p>直勾勾地盯着上面的汇编代码看了好长时间，并没有发现乱序优化。那还会有什么原因呢？突然发现 <code>5271 add r8, r8, r3</code> 之后紧跟着 <code>5272 bpl .LCB4909</code> 条件跳转指令，而 <code>add</code> 指令并不带 <code>s</code> 后缀（这里的判断是误打误撞，其实 <code>thumb</code> 指令压根就没有 <code>s</code> 后缀，<code>arm</code> 指令才有），应该不会影响标志位，故其后的条件跳转指令就达不到预期目的，和这两条汇编指令对应的 <code>C</code> 代码是</p>
+<pre><code>417       const int newlen = buf-&gt;len + len; // r3 -&gt; len, r8 -&gt; buf-&gt;len
+418       return newlen &gt;= 0 &amp;&amp; ...
+</code></pre>
+<p>啊哈，就是这里的 bug。</p>
+<h1>关于 <code>s</code> 后缀的误打误撞</h1>
+<p><code>thumb add</code> 指令有多个种类，一类指令是<strong>只能</strong>访问到 <code>low registers (r0-r7)</code>，这类 <code>add</code> 指令<strong>会更新</strong>对应标志位，而能够访问到 <code>high registers</code> 的这类 <code>thumb add</code> 指令，手册上明确说明<strong>不会更新标志位</strong>。而 <code>r8</code> 刚好是 <code>high register</code>，汇编器 <code>as</code> 便选择了能够访问 <code>high register</code> 的这类 <code>add</code> 指令，从而标志位没能得到有效更新，才导致了上述 bug。</p>
+<h1>解决（规避）方案</h1>
+<p>bug 是 <code>gcc</code> 工具链导致的，使用的版本是 <a title="Gnu GCC v4.4.7" href="http://ftp.gnu.org/gnu/gcc/gcc-4.4.7/gcc-4.4.7.tar.bz2"><code>gcc v4.4.7</code></a>，最直接的办法是更换掉有问题的工具链，但是多方面的原因，无法评估换工具链的风险，也没能在 <code>gcc issue tracker</code> 里找到这样的问题报告，所以不会有简单修复 <code>gcc</code> 的办法。故只能另辟蹊径，规避掉这个 bug。<code>r8</code> 引起的 bug，而 <code>r8</code> 缓存的是 <code>buf-&gt;len</code>，禁用这个缓存就可以解决，最简单粗暴的方法就是将对应 <code>buf</code> 用 <code>volatile</code> 修饰，<code>gcc</code> 便不会将结果缓存进 <code>r8</code> 寄存器了。</p>
+<h1>总结</h1>
+<p>发生了 bug，虽然定位了问题的根源，但是一时之间还难以从根源上解决问题，只是投机取巧避而远之，更严重的是不知道是否还有其他地方存在这同样的问题，所以选择规避问题绝非正道，等后面有时间一定得从问题的根源上解决。</p>
+<h2>2017年9月6日更新</h2>
+<p>在深挖了 <a href="http://ftp.gnu.org/gnu/gcc/gcc-4.4.7/gcc-4.4.7.tar.bz2" title="Gnu GCC v4.4.7"><code>gcc v4.4.7</code></a> 源代码和阅读了大量相关 <a href="https://gcc.gnu.org/onlinedocs/gccint" title="GNU Compiler Collection (GCC) Internals">gcc internals</a> 文档之后，终于定位到生成错误汇编代码的位置，位于 <a href="https://gcc.gnu.org/viewcvs/gcc/tags/gcc_4_4_7_release/gcc/config/arm/arm.md?revision=185319&amp;view=markup#l7181" title="addsi3_cbranch"><code>gcc/config/arm/arm.md</code> 7181 行的 <code>addsi3_cbranch</code></a> 结构。顺着 <code>addsi3_cbranch</code> 这个名字很快就在 gcc svn 中找到了 <a href="https://gcc.gnu.org/viewcvs/gcc?view=revision&amp;revision=158405" title="Bug fix"><code>Revision 158405</code></a>，提交信息如下：</p>
+<blockquote>
+<p>* config/arm/arm.md (addsi3_cbranch): If destination is a high<br />
+  register, inputs must be low registers and we need a low register<br />
+  scratch.  Handle alternative 2 like alternative 3.</p>
+</blockquote>
+<p>看起来很像是修复这个 bug 的，马上打上这个 <a href="https://gcc.gnu.org/viewcvs/gcc/trunk/gcc/config/arm/arm.md?view=patch&amp;r1=158405&amp;r2=158404&amp;pathrev=158405" title="addsi3_cbranch patch">补丁</a> 测试，发现生成对应的汇编代码中多使用了一个低位的临时寄存器 <code>r2</code> 来进行加法运算，而两个低位寄存器相加是能够影响标志位的，从而使得后面的条件跳转指令能够正确执行，显然 bug 修复了。</p>
+<pre><code>mov r2, r8
+add r2, r2, r3
+mov r8, r2
+bpl .LCB4945
+b   .L428   @long jump
+</code></pre>
+<p>使用补丁后的 <code>gcc</code> 重新编译所有软件，并更新到设备上。至此，问题完美解决。</p>
+
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/GCC.html">GCC</a><a href="/tag/ARM.html">ARM</a><a href="/tag/ASM.html">ASM</a><a href="/tag/ONT.html">ONT</a><a href="/tag/OpenVPN.html">OpenVPN</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont';
+var disqus_title = '编译 OpenVPN 邂逅 ARM GCC bug';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

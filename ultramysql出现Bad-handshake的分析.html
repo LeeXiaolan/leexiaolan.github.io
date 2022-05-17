@@ -1,0 +1,262 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> ultramysql出现Bad handshake的分析 - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/ultramysql出现Bad-handshake的分析.html">ultramysql出现Bad handshake的分析</a></h2>
+	<p class="topMeta">由 李晓岚 在 2013年04月15日发表</p>
+	<div class="topContent">
+	
+	<p>最近一直在使用ultramysql做为mysql的驱动做开发，开发过程也很顺利。</p>
+<p>为什么会选ultramysql呢？只缘于ultramysql是gevent兼容的。项目中使用gevent来处理网络IO，所以需要与gevent兼容。</p>
+<p>当项目开发得差不多了，准备部署到测试服务器上测试时，却傻眼了，死活连接不上mysql服务器。异常信息也很奇怪，时而Bad handshake，时而Connection reset。跑到ultramysql项目issue上一看，唯一一个处于开放状态的issue就是这个问题。但是ultramysql的维护者却因为信息不足，不能复现而关闭过一次。</p>
+<p>具体情况是这样：开发环境使用mysql版本是5.5，ultramysql连接没有问题。测试服务器是管理员配置的centos 5.6，只有mysql 5.0的源，图方便就装了mysql 5.0。然后就出现了上面的情况。为了定位问题，使用官方mysql客户端连接mysql 5.0完全没有问题。这时想到抓去网络包来分析一下差异。</p>
+<p>果断wireshark上场。结果发现服务器返回的Authentication response，不是<a href="http://dev.mysql.com/doc/internals/en/connection-phase.html#successful-authentication">http://dev.mysql.com/doc/internals/en/connection-phase.html#successful-authentication</a>与<a href="http://dev.mysql.com/doc/internals/en/connection-phase.html#authentication-fails">http://dev.mysql.com/doc/internals/en/connection-phase.html#authentication-fails</a>中的任何一个，而是一个EOF_Packet，然后官方客户端还客气的回一个包，更要命的是，连wireshark也不认识这个回应。而ultramysql代码认为除了明确的认证失败，都假定认证成功的，所以就在后续的查询过程中出现了不确定的异常。</p>
+<p>google一番后发现了这个<a href="http://dev.mysql.com/doc/internals/en/connection-phase.html#packet-Protocol::AuthSwitchResponse">http://dev.mysql.com/doc/internals/en/connection-phase.html#packet-Protocol::AuthSwitchResponse</a>，原来那个EOF_Packet是切换为旧密码认证的指令。Fork ultramysql代码，按照文档，添加旧密码认证代码后，很快就测试通过了。</p>
+<p>另外一个原因，Mysql 5.0默认开启了old_passwords, 导致新建立的用户都是使用旧密码，才出现了上面的问题。在不修改ultramysql代码的情况下，修改配置文件，将old_passwords改成0，也能解决上面的问题。</p>
+<p>其实，除了抓包可以发现问题的根源外，还可以读官方的客户端的代码，获取相关信息。只是由于对代码不熟悉，很难快速定位到源代码位置，所以才选择了抓包分析。</p>
+<p>自己的问题解决了，立即向上游发出pull request，将patch反馈给上游，避免以后其它人遇到同样的问题。</p>
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/ultramysql.html">ultramysql</a><a href="/tag/python.html">python</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'ultramysql出现Bad-handshake的分析';
+var disqus_title = 'ultramysql出现Bad handshake的分析';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

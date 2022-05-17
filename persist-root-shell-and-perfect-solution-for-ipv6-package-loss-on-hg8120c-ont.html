@@ -1,0 +1,319 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> HG8120C持久root shell及完美解决IPv6丢包 - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></h2>
+	<p class="topMeta">由 李晓岚 在 2016年08月11日发表</p>
+	<div class="topContent">
+	
+	<p>在博文<a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a>中，虽然取得了<code>root shell</code>，但不能持久，设备重启后需要重新获取。<a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a>虽然确定了<code>IPv6-in-IPv4</code>丢包的是ONT引起的，但没有给出解决方案，只是规避问题。强迫症发作的你是否也对这两问题耿耿于怀呢？这次就来将两遗留问题一并完美解决，才能做到真正释怀。</p>
+<h1>查找<code>IPv6-in-IPv4</code>丢包的罪魁祸首</h1>
+<p>通过<a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a>的分析，怀疑某个内核驱动对<code>IPv6-in-IPv4</code>数据包进行了错误转发。但是<code>lsmod</code>列出的模块众多，也可能问题模块是作为<code>built-in</code>编译在内核里面，所以当时就匆匆使用桥接方案规避了问题模块。接下来的时间里，心里就一直挂念着如何找到完美解决方案，导致食无味，寝不安。</p>
+<p>这天，下定决心要把整个<code>lsmod</code>列出的所以模块都检查一遍，一边运行<code>ping6 ipv6.google.com</code>，一边一个一个模块进行移除，观察<code>ping6</code>反馈的结果。这个过程进行得十分缓慢，原因是许多模块的卸载过程会导致随机重启，模块数量有上百个，而且引用关系复杂。</p>
+<pre><code>WAP(Dopra Linux) # lsmod|wc -l
+119
+</code></pre>
+<p>每当随机重启后，只能将有依赖关系的模块重新卸载，才能继续，很可能又会很快导致随机重启，近乎死循环。但是好歹还是慢慢向前推进着。当进行到<code>l3sfwd_ipv6</code>这个模块时，感觉很像罪魁祸首，因为名字中带<code>ipv6</code>，可以肯定和<code>IPv6</code>有关，<code>fwd</code>也像是单词forward（转发）缩写，<code>l3</code>看起来像是指<code>layer 3</code>，那个错误转发也确实是发生在三层上，一切看起来都能说得通。然而移除<code>l3sfwd_ipv6</code>之后问题依旧。没办法，只能继续检查剩下的模块，在移除了<code>l3sfwd</code>模块后，丢包现象消失了。费了九牛二虎之力终于找到罪魁祸首了，这个罪恶模块应该是和<code>IPv4</code>转发相关的，毕竟<code>IPv6-in-IPv4</code>还是<code>IPv4</code>协议。</p>
+<p>为了进一步确定不是多个模块组合造成的丢包，重启设备后，只移除<code>l3sfwd</code>和两个依赖模块<code>l3sfwd_ipv6</code>和<code>rawip_adpt</code>，丢包问题消失，并且也不影响网络和电话功能，一切都很正常，哈哈哈哈！虽然找到了问题的根源，但如何保证设备掉电重启后，自动移除这三个引起问题的模块呢？新的问题又来了，不能高兴得太早。</p>
+<h1>持久<code>root shell</code></h1>
+<p><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">之前</a>获取的<code>root shell</code>，都只是在内存<code>tmpfs</code>中操作，设备重启后将消失。设备在<code>/mnt/jffs2</code>上挂载了闪存文件系统<code>ubifs</code>（没错，是<code>ubifs</code>，不是<code>jffs2</code>），可读写，用于保存设备的配置文件等信息。虽然可以将<code>root shell</code>所需的文件保存在这个路径下，即使设备掉电文件也不会消失，但还必须找到方法，实现自启动，<code>root shell</code>才能持久。</p>
+<h1>如何实现自启动</h1>
+<p>实现自启动最容易想到的办法就是修改<code>/etc/rc.d</code>下的启动脚本，添加启动命令到其中。虽然最容易想到，但并不代表最容易实现。首先<code>/etc/rc.d</code>位于根文件系统中，而根文件系统使用的是<code>squashfs</code>只读文件系统。其次修改根文件系统风险比较高，不能fail safe，一旦根文件系统损坏，设备可能就变砖，对于在线正在使用中的网络设备，高风险的变砖情况是不可接受的，一旦变砖网络和电话就都瘫痪了。其实，HG8120C这个设备实现了双系统，但目前不知道如何操作才能保证在修改一个系统的根文件系统导致启动失败的情况下，如何自动或手动切换到另一个正常系统。综上所述，我需要找到一个低风险，fail safe的添加自启动的方法。</p>
+<p>唯一符合这样条件的自启动方案，就是将启动命令文件存储在<code>/mnt/jffs2</code>路径下，诱导某个系统程序在启动过程中来执行之，这样可以避免损坏<code>rootfs</code>。</p>
+<h1>寻找可能被诱导的程序</h1>
+<p>跟随系统的启动脚本流程，仔细检查每个可能的切入点。最先发现可能的切入点在<code>/etc/rc.d/rc.start/1.sdk_init.sh</code>的第76行，如果文件<code>/mnt/jffs2/Equip.sh</code>存在，就运行<code>/bin/Equip.sh</code>，运行成功之后就退出。</p>
+<pre><code>76  [ -f /mnt/jffs2/Equip.sh ] &amp;&amp; /bin/Equip.sh &amp;&amp; exit
+</code></pre>
+<p>继续查看<code>/bin/Equip.sh</code>，发现文件最后一行会执行<code>/mnt/jffs2</code>路径下的某个程序：</p>
+<pre><code>/mnt/jffs2/equipment/bin/aging &amp;
+</code></pre>
+<p>乍一看，这个看似可以被利用来执行我们指定的程序<code>/mnt/jffs2/equipment/bin/aging</code>，但是对比<code>1.sdk_init.sh</code>后续的启动命令和<code>/bin/Equip.sh</code>发现有太多差异，恐怕启动后设备功能不正常。所以只能当作最后的救命稻草，只有在找不到其他更好的切入点时才会使用。继续检查<code>1.sdk_init.sh</code>，426行代码如下：</p>
+<pre><code>426 #start for hw_ldsp_cfg进行单板差异化配置，必须放在前面启动
+427 iLoop=0
+428 echo -n "Start ldsp_user..."
+429 if [ -e /bin/hw_ldsp_cfg ]
+430 then
+431   hw_ldsp_cfg &amp;
+432   while [ $iLoop -lt 50 ] &amp;&amp; [ ! -e /var/hw_ldsp_tmp.txt ]
+433   do
+434     #echo $iLoop
+435     iLoop=$(( $iLoop + 1 ))
+436     sleep 0.1
+437   done
+438
+439   if [ -e /var/hw_ldsp_tmp.txt ]
+440   then
+441       rm -rf /var/hw_ldsp_tmp.txt
+442   fi
+443 fi
+</code></pre>
+<p>这几行代码的意思是执行<code>/bin/hw_ldsp_cfg</code>并等待某个标志文件的创建，等待超时5秒。分析<code>/bin/hw_ldsp_cfg</code>发现，如果<code>/mnt/jffs2/Equip.sh</code>和<code>/mnt/jffs2/flashtest</code>两个文件同时都存在的情况下，会执行这个<code>/mnt/jffs2/equipment/bin/prbstest</code>程序，这三个文件都位于<code>/mnt/jffs2</code>路径下，都能被我们控制，同时也没有改变<code>1.sdk_init.sh</code>中后续的正常启动流程，所以这是一个很好的候选者。</p>
+<p>利用<code>/bin/hw_ldsp_cfg</code>来执行<code>/mnt/jffs2/equipment/bin/prbstest</code>需要满足的两个条件，其中一个是<code>/mnt/jffs2/Equip.sh</code>，而这个文件存在表明设备处于“装备模式”，<code>grep</code>后发现系统中很多程序在“装备模式”下，行为都会发生改变，这会增加太多的不确定性，所以当我们利用<code>/mnt/jffs2/Equip.sh</code>启动我们的程序后，需要将此文件删除，尽可能保持系统原来的行为。同时也注意到<code>/mnt/jffs2/Equip.sh</code>也是上面我们最后救命稻草的启动条件，也就是说如果文件存在，启动流程压根就不会走到<code>1.sdk_init.sh</code>的426行，该如何解决这个冲突呢？<code>hw_ldsp_cfg</code>是<code>elf</code>文件，使用<code>open</code>系统调用检查文件的存在性，而<code>1.sdk_ini.sh</code>76行使用<code>shell</code>脚本的<code>[ -f /mnt/jffs2/Equip.sh]</code>来测试存在并且是普通文件。“普通文件”这个条件比单纯的系统调用<code>open</code>更加严格，对设备文件等特殊文件来说<code>[ -f ... ]</code>会失败，但<code>open</code>调用不会，所以如果在路径<code>/mnt/jffs2/Equip.sh</code>创建一个设备文件或管道等非普通文件，就可以达到我们的目的。</p>
+<p>上述利用看起来能够完美工作，即不改变额外的系统原有行为，也达到了启动我们程序的目的。确实很完美，但只能完美工作一次，第二次设备重启后就不会工作了，因为为了尽可能保持系统原有行为，<code>/mnt/jffs2/Equip.sh</code>已经被我们删除了，避免启用设备的“装备模式”行为。</p>
+<h1>持久 VS 保持系统原有行为</h1>
+<p>自启动要持久，特殊文件<code>/mnt/jffs2/Equip.sh</code>就必须保留在<code>ubifs</code>文件系统上，保证设备重启后继续存在，但要保持系统原有行为就又必须使得<code>/mnt/jffs2/Equip.sh</code>不存在，设备不处于“装备模式”，两者完全对立。想到的办法就是当我们的程序运行起来后，插入一个内核模块，劫持对<code>ubifs</code>文件系统的访问，将<code>/mnt/jffs2/Equip.sh</code>隐藏起来，但实际文件还存在，重启后到插入我们的劫持模块前文件是可见的，这样便能使得“持久”和“保持系统原有行为”很好的共存了。详细可参考劫持模块源代码<a href="https://github.com/LeeXiaolan/hwfw-tool/blob/master/persist-root-shell-poc/hijack/hijack.c" title="hijack.c">hijack.c</a>。</p>
+<h1>完整流程</h1>
+<ol>
+<li>创建符号链接<code>/mnt/jffs2/Equip.sh</code>，将其指向设备文件<code>/dev/mtd2ro</code>，这样保证<code>[ -f /mnt/jffs2/Equip.sh]</code>失败。</li>
+<li>创建空文件<code>/mnt/jffs2/flashtest</code>。</li>
+<li>
+<p>创建自启动文件<code>/mnt/jffss/equipment/bin/prbstest</code>，在其中实现：</p>
+<ol>
+<li>检查<code>failsafe</code>文件是否存在，如果存在立即退出，保证如果因为插入<code>hijack</code>劫持模块或卸载模块导致系统重启后不再继续我们的自启动，打破重启循环。</li>
+<li>创建<code>failsafe</code>文件。</li>
+<li>插入劫持模块<code>hijack.ko</code>，用于中断符号链接<code>/mnt/jffs2/Equip.sh</code>的follow link，保证<code>open</code>等系统调用失败，保持原有系统行为。</li>
+<li>移除<code>l3sfwd_ipv6</code>，<code>rawip_adpt</code>和<code>l3sfwd</code>三个模块，解决<code>IPv6-in-IPv4</code>丢包问题。</li>
+<li>启动<code>dropbear</code>，实现持久<code>root shell</code>。</li>
+<li>启动正常，移除<code>failsafe</code>文件，保证下次重启后自启动继续得到执行。</li>
+</ol>
+</li>
+</ol>
+<h1>总结</h1>
+<p>至此，HG8120C ONT上<a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）"><code>IPv6-in-IPv4</code>丢包问题</a>算是正式完美解决了，前后历时一个多月（原谅我比较懒，等文章写出来都已经是三四个月之后的事情了）。由于是在线设备，所以一切操作都选择了风险较小的做法，而不是高风险直接修改<code>rootfs</code>的方法，保证fail safe，保证不损坏设备，网络和电话功能正常，额外还收获持久的设备root访问权限。</p>
+<p>关于自启动逻辑中的fail safe，实际重启测试中，未发现插入或移除内核模块导致重启的情况，但是还是以防万一，毕竟小心行得万年船，避免任何不必要的风险。</p>
+
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/ONT.html">ONT</a><a href="/tag/PWN.html">PWN</a><a href="/tag/IPv6-in-IPv4.html">IPv6-in-IPv4</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont';
+var disqus_title = 'HG8120C持久root shell及完美解决IPv6丢包';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

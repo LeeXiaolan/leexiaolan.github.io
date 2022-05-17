@@ -1,0 +1,350 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> PWN华为HG8120C光猫（二） - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></h2>
+	<p class="topMeta">由 李晓岚 在 2016年05月20日发表</p>
+	<div class="topContent">
+	
+	<p><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">上一篇博文</a>中，由于厂商采取了一定的安全预防措施，试图通过UART来PWN ONT HG8120C的尝试出人意料的失败了，但是这并不能摧毁我不达目的不罢休的决心，又尝试了多种方法，还是未能成功。难道非得使用直接读写Flash芯片（这种方法风险较大，可能损坏设备。同时设备也不能用，会断网，家里人会很生气，后果很严重。所以在还有其它可能的情况下，是不会轻易使用这种方法的。）这个终极法宝了？几乎绝望之际，想起来网上流传的厂商<a href="https://www.google.com/search?source=xiaolan.lee&amp;q=维修使能+华为" title="Google搜索">维护使能工具</a>，又燃起了一丝希望。</p>
+<h1>维护使能工具能做什么</h1>
+<p>该工具用于厂商售后，所谓使能，就是开启设备的维护模式，并关闭防火墙对telnet 23端口的访问限制。使能后，telnet终端能够完成的设备维护的全部操作（UART得到的命令行其实就是这个telnet终端），但对于我的目的，得到root shell并运行<code>tcpdump</code>来说，毫无用处。所以，引起我兴趣的不是使能后能做什么，而是使能工具如何和设备交互，发出使能命令的，说不定也能发出其它命令，比如就像我期望的<code>tcpdump</code>。</p>
+<h1>维护使能工具的工作原理</h1>
+<p>该工具是运行的Windows上的一个可执行文件，想了解其工作原理，有两个办法：一是对exe进行逆向工程，二是抓包分析其发送的数据（其实不能算分析，纯粹瞎猜各个字节的意义，然后小心求证罢了）。使用dumpbin查看exe文件：</p>
+<pre><code>    D:\tmp&gt;dumpbin /summary ONT.exe
+    Microsoft (R) COFF Binary File Dumper Version 6.00.8447
+    Copyright (C) Microsoft Corp 1992-1998. All rights reserved.
+
+    Dump of file D:\tmp\ONT.exe
+
+    File Type: EXECUTABLE IMAGE
+
+      Summary
+
+            2000 .text
+            2000 HWB8zP1w
+            1000 LEXmTy1n
+          216000 QrVbjeUa
+          20E000 lS8TSGXu
+           29000 niBTgJWZ
+            1000 sfW0L9wz
+</code></pre>
+<p>从section name来看，应该加过壳，逆向工程难度未知，那就试试抓包吧。</p>
+<pre><code>    11:26:03.559243 IP 192.168.1.2.819 &gt; 255.255.255.255.6877: UDP, length 244
+    11:26:03.568366 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.770581 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.771255 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.803305 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.805057 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.805933 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.836141 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.836869 IP 192.168.1.2.918 &gt; 224.0.0.99.4891: UDP, length 1220
+</code></pre>
+<p>在第一个广播包中，发现了<code>224.0.0.99</code>和<code>4891</code>，于是猜测第一个UDP广播包是敲门砖，告诉设备后续数据包的目的IP和端口，其中还包括了后续数据包的个数和大小。后面的数据包就更简单了，几个固定值，包序号，数据长度，<code>\0</code>填充和数据。为了克服UDP丢包问题，每个数据包都进行了多次重传。有了这些信息，很容易就可以从抓包的数据中，拼凑出完整的payload（其实，使能工具运行起来后，壳已经将数据解压，抓取其内存镜像，就能从中获取到完整的payload，只是不好确定payload和其它数据的边界而已）。有了payload后，对其使用常用的CRC16，CRC32，MD5，SHA-1等摘要算法，马上就发现了广播包中也包含也payload的CRC32信息。</p>
+<p>将完整的payload保存为payload.bin，使用strings查看：</p>
+<pre><code>    leexiaolan@localhost $ strings payload.bin
+    HWNP
+    120|130|140|141|150|160|170|171|180|190|1B1|1A1|1A0|1B0|1D0|1F1|201|211|221|230|240|260|261|270|271|280|281|291|2A1|431|
+    file:/var/UpgradeCheck.xml
+    UPGRDCHECK
+    file:/mnt/jffs2/equipment.tar.gz
+    MODULE
+    file:/mnt/jffs2/ProductLineMode
+    UNKNOWN
+    file:/mnt/jffs2/TelnetEnable
+    UNKNOWN
+    file:/tmp/duit9rr.sh
+    UNKNOWN
+    file:/var/efs
+    ...
+    poo2
+    #! /bin/sh
+    var_etc_version_file="/etc/version"
+    var_etc_version=""
+    var_version_1="V100R006C00SPC130"
+    var_version_2="V200R006C00SPC130"
+    var_version_3="V300R013C00SPC106"
+    var_version_4="V300R013C10SPC108"
+    var_etc_version_V=""
+    var_etc_version_R=""
+    ...
+</code></pre>
+<p>有趣的东西终于出现了，看起来有个像shell脚本的字符串。仔细深入查看发现：</p>
+<pre><code>    #设置打开telnet的控制节点
+    HW_Open_Telnet_Ctree_Node()
+    {
+        var_node_telnet=InternetGatewayDevice.X_HW_Security.AclServices
+
+        #set telnet
+        EnableLanTelnetValue="1"
+        cp -f $var_jffs2_current_ctree_file $var_current_ctree_bak_file
+        $var_pack_temp_dir/aescrypt2 1 $var_current_ctree_bak_file $var_current_ctree_file_tmp
+        mv $var_current_ctree_bak_file $var_current_ctree_bak_file".gz"
+        gunzip -f $var_current_ctree_bak_file".gz"
+
+        #set TELNETLanEnable
+        cfgtool set $var_current_ctree_bak_file $var_node_telnet TELNETLanEnable $EnableLanTelnetValue
+        if [ 0 -ne $? ]
+        then
+            echo "ERROR::Failed to set TELNETLanEnable!"
+        fi
+
+        #encrypt var_default_ctree
+        gzip -f $var_current_ctree_bak_file
+        mv $var_current_ctree_bak_file".gz" $var_current_ctree_bak_file
+        $var_pack_temp_dir/aescrypt2 0 $var_current_ctree_bak_file $var_current_ctree_file_tmp
+        rm -f $var_jffs2_current_ctree_file
+        cp -f $var_current_ctree_bak_file $var_jffs2_current_ctree_file
+        return 0
+    }
+</code></pre>
+<p>原来是给ONT设备发送了一个shell脚本来开启telnet。嗯，这看起来很像我要的执行任意代码的入口。</p>
+<h1>转机</h1>
+<p>如果能继续把payload的文件结构分析（瞎猜）清楚，就能修改payload中的脚本，运行我自己的代码了。至于如何发送修改过后的payload，这个大可不必自己写个程序来实现维护使能工具那套逻辑，使用原始工具使能telnet后，通过telnet终端使用<code>load pack</code>命令从<code>FTP</code>或<code>TFTP</code>加载payload即可。还有另一个好处就是，维护使能工具必须在未接入运营商网络的情况下使用，而<code>load pack</code>没有这个限制。离目标PWN越来越近了，后篇将分析payload结构，并修改和运行我自己的payload。</p>
+<p>PS: 上述信息经过华为PSIRT确认，不会对用户或网络带来风险。</p>
+
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/ONT.html">ONT</a><a href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html">路由器</a><a href="/tag/%E5%9B%BA%E4%BB%B6.html">固件</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2';
+var disqus_title = 'PWN华为HG8120C光猫（二）';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>

