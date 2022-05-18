@@ -1150,7 +1150,7 @@ V800R015C10SPC189B001
       <title>TP-LINK VxWorks系统路由器固件升级文件格式(三)</title>
       <content type="html"><![CDATA[
       &lt;p&gt;在&lt;a href=&quot;/tp-link-vxworks-router-firmware-update-file-format-part-1.html&quot;&gt;TP-LINK VxWorks系统路由器固件升级文件格式(一)&lt;/a&gt;中，经过一定的逻辑推理分析，虽然分辨出了固件升级文件中的有效载荷部分，但这种方法对偏移&lt;code&gt;0x00-0x5c&lt;/code&gt;的文件头信息却无能为力。想要知道这部分头信息的确切含义，只能依靠分析反汇编代码。&lt;/p&gt;
-&lt;pre&gt;&lt;code&gt;loc_800D9468:                            # CODE XREF: sysmgr_lib_fwupMain+38j
+&lt;pre&gt;&lt;code&gt;loc_800D9468:                            # CODE XREF: sysmgr_lib_fwupMain+38
                 lw      $v0, 0($a0)             # &amp;lt;------------ file size
                 beq     $v0, $a1, loc_800D9490
                 lui     $a1, 0x806E
@@ -1162,7 +1162,7 @@ V800R015C10SPC189B001
                 li      $s1, 0xFFFFFFFE
  # ---------------------------------------------------------------------------
 
-loc_800D9490:                            # CODE XREF: sysmgr_lib_fwupMain+9Cj
+loc_800D9490:                            # CODE XREF: sysmgr_lib_fwupMain+9C
                 addiu   $s0, $a0, 4            # &amp;lt;------------ md5 hash
                 addiu   $s2, $sp, 0x270+var_250
                 move    $a1, $s0
@@ -1194,7 +1194,7 @@ loc_800D9490:                            # CODE XREF: sysmgr_lib_fwupMain+9Cj
                 li      $s1, 0xFFFFFFFE
  # ---------------------------------------------------------------------------
 
-loc_800D9504:                            # CODE XREF: sysmgr_lib_fwupMain+110j
+loc_800D9504:                            # CODE XREF: sysmgr_lib_fwupMain+110
                 jal     sysmgr_cfg_getProductInfoFromNvram
                 addiu   $a0, $sp, 0x270+var_230
                 bltz    $v0, loc_800D9548
@@ -1214,7 +1214,7 @@ loc_800D9504:                            # CODE XREF: sysmgr_lib_fwupMain+110j
                 li      $s1, 0xFFFFFFFD
  # ---------------------------------------------------------------------------
 
-loc_800D9548:                            # CODE XREF: sysmgr_lib_fwupMain+13Cj
+loc_800D9548:                            # CODE XREF: sysmgr_lib_fwupMain+13C
                 lui     $a0, 0x807E
                 lui     $a1, 0x806E
                 la      $a0, aErrorS05dGet_7  # &quot;[Error](%s) %05d: get productInfo faile&quot;...
@@ -1225,7 +1225,7 @@ loc_800D9548:                            # CODE XREF: sysmgr_lib_fwupMain+13Cj
                 li      $s1, 0xFFFFFFFE
  # ---------------------------------------------------------------------------
 
-loc_800D9568:                            # CODE XREF: sysmgr_lib_fwupMain+150j
+loc_800D9568:                            # CODE XREF: sysmgr_lib_fwupMain+150
                 addiu   $a1, $s4, 0x54          # &amp;lt;---------- model id
                 jal     memcmp
                 li      $a2, 8
